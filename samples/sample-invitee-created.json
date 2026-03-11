@@ -1,0 +1,24 @@
+{
+  "event": "invitee.created",
+  "payload": {
+    "uri": "https://api.calendly.com/invitees/AAAA-BBBB-CCCC",
+    "email": "john@example.com",
+    "name": "John Doe",
+    "status": "active",
+    "scheduled_event": "https://api.calendly.com/scheduled_events/EEEE-FFFF-GGGG",
+    "questions_and_answers": [
+      {
+        "question": "Company Name",
+        "answer": "Logitudeworld"
+      },
+      {
+        "question": "Country",
+        "answer": "United Arab Emirates"
+      },
+      {
+        "question": "Are you a freight forwarder?",
+        "answer": "Yes"
+      }
+    ]
+  }
+}

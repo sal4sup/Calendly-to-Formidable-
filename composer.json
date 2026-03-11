@@ -1,0 +1,11 @@
+{
+  "name": "logitudeworld/calendly-to-formidable-bridge",
+  "description": "WordPress plugin to sync Calendly bookings to Formidable Forms",
+  "type": "wordpress-plugin",
+  "license": "GPL-2.0-or-later",
+  "autoload": {
+    "psr-4": {
+      "CTFB\\": "src/"
+    }
+  }
+}
