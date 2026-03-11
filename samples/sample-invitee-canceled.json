@@ -1,0 +1,10 @@
+{
+  "event": "invitee.canceled",
+  "payload": {
+    "uri": "https://api.calendly.com/invitees/AAAA-BBBB-CCCC",
+    "email": "john@example.com",
+    "name": "John Doe",
+    "status": "canceled",
+    "scheduled_event": "https://api.calendly.com/scheduled_events/EEEE-FFFF-GGGG"
+  }
+}
