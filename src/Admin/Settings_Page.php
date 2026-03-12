@@ -34,6 +34,8 @@ class Settings_Page {
 		$sanitized['webhook_subscription_uri']   = isset( $existing['webhook_subscription_uri'] ) ? $existing['webhook_subscription_uri'] : '';
 		$sanitized['webhook_scope']              = isset( $existing['webhook_scope'] ) ? $existing['webhook_scope'] : 'user';
 		$sanitized['webhook_scope_uri']          = isset( $existing['webhook_scope_uri'] ) ? $existing['webhook_scope_uri'] : '';
+		$sanitized['webhook_user_uri']           = isset( $existing['webhook_user_uri'] ) ? $existing['webhook_user_uri'] : '';
+		$sanitized['webhook_organization_uri']   = isset( $existing['webhook_organization_uri'] ) ? $existing['webhook_organization_uri'] : '';
 		return $sanitized;
 	}
 
@@ -126,17 +128,14 @@ class Settings_Page {
 		$this->log_action_entry( 'admin_action_preview_create_webhook_payload_entered', 'ctfb_preview_create_webhook_payload' );
 		$this->verify_admin_action_security( 'ctfb_preview_create_webhook_payload' );
 
-		$options  = get_option( 'ctfb_options', array() );
-		$token    = isset( $options['pat'] ) ? $options['pat'] : '';
-		$user_uri = Token_Helper::get_user_uri_from_pat( $token );
-		$payload  = array(
-			'url'    => rest_url( 'ctfb/v1/webhook' ),
-			'events' => array( 'invitee.created', 'invitee.canceled' ),
-			'scope'  => 'user',
-			'user'   => $user_uri,
-		);
+		$options = get_option( 'ctfb_options', array() );
+		$context = $this->derive_webhook_context( $options );
+		if ( ! empty( $context['error'] ) ) {
+			$this->redirect_with_notice( $context['error'], true );
+		}
 
-		Logger::info( 'create_webhook_request_payload_prepared', array( 'payload' => $payload ) );
+		$payload = $this->build_webhook_payload( $context['user_uri'], $context['organization_uri'] );
+		Logger::info( 'preview_final_webhook_payload_generated', array( 'payload' => $payload ) );
 		update_option( 'ctfb_preview_create_webhook_payload', $payload );
 		$this->redirect_with_notice( 'Webhook payload preview generated. See Diagnostics section.', false );
 	}
@@ -203,45 +202,28 @@ class Settings_Page {
 		$options = get_option( 'ctfb_options', array() );
 		Logger::debug( 'settings_loaded_for_create_webhook' );
 
-		$token = isset( $options['pat'] ) ? $options['pat'] : '';
-		Logger::debug( 'token_present_yes_or_no', array( 'present' => empty( $token ) ? 'no' : 'yes' ) );
-		Logger::debug( 'token_masked_preview', array( 'pat' => $this->mask_pat( $token ) ) );
-		if ( empty( $token ) ) {
-			return array( 'is_error' => true, 'message' => 'Missing Personal Access Token.' );
+		$context = $this->derive_webhook_context( $options );
+		if ( ! empty( $context['error'] ) ) {
+			Logger::error( 'create_webhook_context_resolution_failed', array( 'error' => $context['error'] ) );
+			$this->update_webhook_diagnostics( 'failed', $context['error'] );
+			$this->update_trace( 'last_create_webhook_api_error', $context['error'] );
+			$this->update_trace( 'last_create_webhook_api_status', '0' );
+			return array( 'is_error' => true, 'message' => $context['error'] );
 		}
 
-		$user_uuid = Token_Helper::get_user_uuid_from_pat( $token );
-		Logger::debug( 'derived_user_uuid_from_pat', array( 'user_uuid' => $user_uuid ) );
-		$user_uri = Token_Helper::get_user_uri_from_pat( $token );
-		Logger::debug( 'derived_user_uri_from_pat', array( 'user_uri' => $user_uri ) );
-		if ( empty( $user_uri ) ) {
-			return array( 'is_error' => true, 'message' => 'Malformed PAT: user_uuid claim is missing.' );
-		}
-
-		$client = new Calendly_Client( $token );
-		Logger::debug( 'attempting_get_users_me' );
-		$me_trace = array();
-		$me       = $client->get_users_me( $me_trace );
-		Logger::debug( 'users_me_response_success_or_failure', array( 'result' => is_wp_error( $me ) ? 'failure' : 'success' ) );
-		$org_uri = ( ! is_wp_error( $me ) && ! empty( $me['resource']['current_organization'] ) ) ? $me['resource']['current_organization'] : '';
-		Logger::debug( 'organization_uri_detected', array( 'organization_uri' => $org_uri ) );
+		$client  = new Calendly_Client( $context['token'] );
+		$payload = $this->build_webhook_payload( $context['user_uri'], $context['organization_uri'] );
 
 		if ( $refresh && ! empty( $options['webhook_subscription_uri'] ) ) {
 			$delete_trace = array();
 			$client->delete_webhook( $options['webhook_subscription_uri'], $delete_trace );
 		}
 
-		$create_payload = array(
-			'url'    => rest_url( 'ctfb/v1/webhook' ),
-			'events' => array( 'invitee.created', 'invitee.canceled' ),
-			'scope'  => 'user',
-			'user'   => $user_uri,
-		);
 		Logger::info( 'create_webhook_api_call_started' );
-		Logger::info( 'create_webhook_request_payload_prepared', array( 'payload' => $create_payload ) );
+		Logger::info( 'create_webhook_request_payload_prepared', array( 'payload' => $payload ) );
 
 		$trace    = array();
-		$response = $client->create_webhook( rest_url( 'ctfb/v1/webhook' ), 'user', $user_uri, $trace );
+		$response = $client->create_webhook( $payload['url'], 'user', $context['user_uri'], $context['organization_uri'], $trace );
 		Logger::info(
 			'create_webhook_api_response_received',
 			array(
@@ -256,31 +238,89 @@ class Settings_Page {
 		);
 
 		if ( is_wp_error( $response ) ) {
-			Logger::error( 'create_webhook_api_success_or_failure', array( 'result' => 'failure', 'reason' => $response->get_error_message() ) );
-			$this->update_trace( 'last_create_webhook_api_status', isset( $trace['http_status'] ) ? (string) $trace['http_status'] : '0' );
-			$this->update_trace( 'last_create_webhook_api_error', $response->get_error_message() );
-			return array( 'is_error' => true, 'message' => $response->get_error_message() );
+			$http_status = isset( $trace['http_status'] ) ? (string) $trace['http_status'] : '0';
+			$parsed_body = isset( $trace['parsed_response'] ) ? $trace['parsed_response'] : array();
+			$error_msg   = $response->get_error_message();
+			Logger::error( 'create_webhook_api_failed', array( 'http_status' => $http_status, 'parsed_response' => $parsed_body, 'error_message' => $error_msg ) );
+			$this->update_trace( 'last_create_webhook_api_status', $http_status );
+			$this->update_trace( 'last_create_webhook_api_error', $error_msg );
+			$this->update_webhook_diagnostics( 'failed', $error_msg );
+			return array( 'is_error' => true, 'message' => 'Webhook creation failed: ' . $error_msg );
 		}
 
-		Logger::info( 'create_webhook_api_success_or_failure', array( 'result' => 'success' ) );
-		$resource          = isset( $response['resource'] ) ? $response['resource'] : array();
-		$subscription_uri  = isset( $resource['uri'] ) ? esc_url_raw( $resource['uri'] ) : '';
-		Logger::info( 'returned_webhook_subscription_uri_or_id', array( 'subscription_uri' => $subscription_uri ) );
+		$resource         = isset( $response['resource'] ) ? $response['resource'] : array();
+		$subscription_uri = isset( $resource['uri'] ) ? esc_url_raw( $resource['uri'] ) : '';
+		$subscription_id  = isset( $resource['id'] ) ? sanitize_text_field( $resource['id'] ) : '';
+		$saved_id_or_uri  = ! empty( $subscription_uri ) ? $subscription_uri : $subscription_id;
 
-		Logger::debug( 'settings_update_started' );
-		$options['webhook_subscription_uri'] = $subscription_uri;
+		$options['webhook_subscription_uri'] = $saved_id_or_uri;
 		$options['webhook_scope']            = isset( $resource['scope'] ) ? sanitize_text_field( $resource['scope'] ) : 'user';
-		$options['webhook_scope_uri']        = ! empty( $org_uri ) ? esc_url_raw( $org_uri ) : $user_uri;
+		$options['webhook_scope_uri']        = $context['user_uri'];
+		$options['webhook_user_uri']         = $context['user_uri'];
+		$options['webhook_organization_uri'] = $context['organization_uri'];
 		update_option( 'ctfb_options', $options );
-		Logger::debug( 'settings_update_completed' );
 
 		$this->update_trace( 'last_create_webhook_api_status', isset( $trace['http_status'] ) ? (string) $trace['http_status'] : '200' );
 		$this->update_trace( 'last_create_webhook_api_error', '' );
-		$this->update_trace( 'last_saved_webhook_subscription_uri', $subscription_uri );
+		$this->update_trace( 'last_saved_webhook_subscription_uri', $saved_id_or_uri );
+		$this->update_webhook_diagnostics( 'success', '' );
+
+		Logger::info( 'create_webhook_api_success', array( 'subscription' => $saved_id_or_uri, 'scope' => $options['webhook_scope'], 'scope_uri' => $options['webhook_scope_uri'], 'organization_uri' => $options['webhook_organization_uri'] ) );
 
 		$message = $refresh ? 'Webhook refreshed successfully.' : 'Webhook created successfully.';
-		Logger::info( 'redirect_notice_success_or_error', array( 'type' => 'success', 'message' => $message ) );
 		return array( 'is_error' => false, 'message' => $message );
+	}
+
+	private function derive_webhook_context( $options ) {
+		$token = isset( $options['pat'] ) ? $options['pat'] : '';
+		Logger::debug( 'token_present_yes_or_no', array( 'present' => empty( $token ) ? 'no' : 'yes' ) );
+		Logger::debug( 'token_masked_preview', array( 'pat' => $this->mask_pat( $token ) ) );
+		if ( empty( $token ) ) {
+			return array( 'error' => 'Missing Personal Access Token.' );
+		}
+
+		$user_uri = Token_Helper::get_user_uri_from_pat( $token );
+		if ( empty( $user_uri ) ) {
+			return array( 'error' => 'Malformed PAT: user_uuid claim is missing.' );
+		}
+
+		$org_uri = '';
+		$client  = new Calendly_Client( $token );
+		$me      = $client->get_users_me();
+		if ( ! is_wp_error( $me ) && ! empty( $me['resource']['current_organization'] ) ) {
+			$org_uri = esc_url_raw( $me['resource']['current_organization'] );
+		} elseif ( ! empty( $options['webhook_organization_uri'] ) ) {
+			$org_uri = esc_url_raw( $options['webhook_organization_uri'] );
+			Logger::warning( 'organization_uri_reused_from_saved_settings', array( 'organization_uri' => $org_uri ) );
+		}
+
+		if ( empty( $org_uri ) ) {
+			return array( 'error' => 'Could not determine Calendly organization URI. Run Test Connection and try again.' );
+		}
+
+		return array(
+			'token'            => $token,
+			'user_uri'         => $user_uri,
+			'organization_uri' => $org_uri,
+		);
+	}
+
+	private function build_webhook_payload( $user_uri, $organization_uri ) {
+		return array(
+			'url'          => rest_url( 'ctfb/v1/webhook' ),
+			'events'       => array( 'invitee.created', 'invitee.canceled' ),
+			'scope'        => 'user',
+			'user'         => $user_uri,
+			'organization' => $organization_uri,
+		);
+	}
+
+	private function update_webhook_diagnostics( $result, $error ) {
+		$diag                               = get_option( 'ctfb_diagnostics', array() );
+		$diag['last_webhook_creation_result'] = sanitize_text_field( $result );
+		$diag['last_webhook_creation_error']  = sanitize_text_field( $error );
+		$diag['last_webhook_creation_time']   = current_time( 'mysql' );
+		update_option( 'ctfb_diagnostics', $diag );
 	}
 
 	private function perform_delete_webhook( $client, $options ) {
@@ -339,7 +379,7 @@ class Settings_Page {
 			<p><a class="button" href="<?php echo esc_url( $urls['refresh_webhook'] ); ?>">Refresh Webhook</a><br/><small>Action slug: ctfb_refresh_webhook</small></p>
 			<p><a class="button" href="<?php echo esc_url( $urls['delete_webhook'] ); ?>">Delete Webhook</a><br/><small>Action slug: ctfb_delete_webhook</small></p>
 			<p><a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_test_create_webhook_handler' ), 'ctfb_test_create_webhook_handler' ) ); ?>">Test Create Webhook Handler</a></p>
-			<p><a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_preview_create_webhook_payload' ), 'ctfb_preview_create_webhook_payload' ) ); ?>">Preview Create Webhook Payload</a></p>
+			<p><a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_preview_create_webhook_payload' ), 'ctfb_preview_create_webhook_payload' ) ); ?>">Preview Final Webhook Payload</a></p>
 
 			<h2>Recent Bookings</h2>
 			<table class="widefat striped"><thead><tr><th>Invitee Name</th><th>Invitee Email</th><th>Event Name</th><th>Start Time</th><th>Status</th></tr></thead><tbody>
@@ -354,6 +394,11 @@ class Settings_Page {
 				<tr><td>Form ID 4 ready</td><td><?php echo class_exists( 'FrmForm' ) && \FrmForm::getOne( 4 ) ? 'Yes' : 'No'; ?></td></tr>
 				<tr><td>Webhook endpoint URL</td><td><?php echo esc_html( rest_url( 'ctfb/v1/webhook' ) ); ?></td></tr>
 				<tr><td>Stored webhook subscription URI or ID</td><td><?php echo esc_html( isset( $options['webhook_subscription_uri'] ) ? $options['webhook_subscription_uri'] : '' ); ?></td></tr>
+				<tr><td>Stored webhook scope</td><td><?php echo esc_html( isset( $options['webhook_scope'] ) ? $options['webhook_scope'] : '' ); ?></td></tr>
+				<tr><td>Stored webhook user URI</td><td><?php echo esc_html( isset( $options['webhook_user_uri'] ) ? $options['webhook_user_uri'] : ( isset( $options['webhook_scope_uri'] ) ? $options['webhook_scope_uri'] : '' ) ); ?></td></tr>
+				<tr><td>Stored webhook organization URI</td><td><?php echo esc_html( isset( $options['webhook_organization_uri'] ) ? $options['webhook_organization_uri'] : '' ); ?></td></tr>
+				<tr><td>Last webhook creation result</td><td><?php echo esc_html( isset( $diagnostics['last_webhook_creation_result'] ) ? $diagnostics['last_webhook_creation_result'] : '' ); ?></td></tr>
+				<tr><td>Last webhook creation error</td><td><?php echo esc_html( isset( $diagnostics['last_webhook_creation_error'] ) ? $diagnostics['last_webhook_creation_error'] : '' ); ?></td></tr>
 				<tr><td>Create webhook action registered</td><td><?php echo ( isset( $hook_status['create'] ) && 'yes' === $hook_status['create'] ) ? 'Yes' : 'No'; ?></td></tr>
 				<tr><td>Refresh webhook action registered</td><td><?php echo ( isset( $hook_status['refresh'] ) && 'yes' === $hook_status['refresh'] ) ? 'Yes' : 'No'; ?></td></tr>
 				<tr><td>Delete webhook action registered</td><td><?php echo ( isset( $hook_status['delete'] ) && 'yes' === $hook_status['delete'] ) ? 'Yes' : 'No'; ?></td></tr>

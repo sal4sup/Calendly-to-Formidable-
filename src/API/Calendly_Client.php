@@ -15,18 +15,21 @@ class Calendly_Client {
 		return $this->request( 'GET', '/users/me', array(), $trace );
 	}
 
-	public function create_webhook( $url, $scope, $scope_uri, &$trace = null ) {
+	public function create_webhook( $url, $scope, $user_uri, $organization_uri, &$trace = null ) {
 		$body = array(
 			'url'    => esc_url_raw( $url ),
 			'events' => array( 'invitee.created', 'invitee.canceled' ),
 			'scope'  => $scope,
 		);
-		if ( ! empty( $scope_uri ) ) {
-			$body['organization'] = $scope_uri;
-			if ( 'user' === $scope ) {
-				unset( $body['organization'] );
-				$body['user'] = $scope_uri;
+		if ( 'user' === $scope ) {
+			if ( ! empty( $user_uri ) ) {
+				$body['user'] = esc_url_raw( $user_uri );
 			}
+			if ( ! empty( $organization_uri ) ) {
+				$body['organization'] = esc_url_raw( $organization_uri );
+			}
+		} elseif ( ! empty( $organization_uri ) ) {
+			$body['organization'] = esc_url_raw( $organization_uri );
 		}
 		return $this->request( 'POST', '/webhook_subscriptions', $body, $trace );
 	}
