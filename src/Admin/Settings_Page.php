@@ -3,6 +3,7 @@
 namespace CTFB\Admin;
 
 use CTFB\API\Calendly_Client;
+use CTFB\Support\Logger;
 use CTFB\Support\Token_Helper;
 use CTFB\Sync\Formidable_Sync;
 
@@ -22,17 +23,17 @@ class Settings_Page {
 	}
 
 	public function sanitize_options( $input ) {
-		$existing          = get_option( 'ctfb_options', array() );
-		$sanitized         = array();
-		$sanitized['enabled'] = ! empty( $input['enabled'] ) ? 1 : 0;
-		$sanitized['debug_logging'] = ! empty( $input['debug_logging'] ) ? 1 : 0;
-		$sanitized['fallback_company_name'] = isset( $input['fallback_company_name'] ) ? sanitize_text_field( $input['fallback_company_name'] ) : '';
+		$existing                                = get_option( 'ctfb_options', array() );
+		$sanitized                               = array();
+		$sanitized['enabled']                    = ! empty( $input['enabled'] ) ? 1 : 0;
+		$sanitized['debug_logging']              = ! empty( $input['debug_logging'] ) ? 1 : 0;
+		$sanitized['fallback_company_name']      = isset( $input['fallback_company_name'] ) ? sanitize_text_field( $input['fallback_company_name'] ) : '';
 		$sanitized['fallback_freight_forwarder'] = ( isset( $input['fallback_freight_forwarder'] ) && 'Yes' === $input['fallback_freight_forwarder'] ) ? 'Yes' : 'No';
-		$sanitized['default_country'] = isset( $input['default_country'] ) ? sanitize_text_field( $input['default_country'] ) : '';
-		$sanitized['pat'] = ! empty( $input['pat'] ) ? sanitize_text_field( $input['pat'] ) : ( isset( $existing['pat'] ) ? $existing['pat'] : '' );
-		$sanitized['webhook_subscription_uri'] = isset( $existing['webhook_subscription_uri'] ) ? $existing['webhook_subscription_uri'] : '';
-		$sanitized['webhook_scope'] = isset( $existing['webhook_scope'] ) ? $existing['webhook_scope'] : 'user';
-		$sanitized['webhook_scope_uri'] = isset( $existing['webhook_scope_uri'] ) ? $existing['webhook_scope_uri'] : '';
+		$sanitized['default_country']            = isset( $input['default_country'] ) ? sanitize_text_field( $input['default_country'] ) : '';
+		$sanitized['pat']                        = ! empty( $input['pat'] ) ? sanitize_text_field( $input['pat'] ) : ( isset( $existing['pat'] ) ? $existing['pat'] : '' );
+		$sanitized['webhook_subscription_uri']   = isset( $existing['webhook_subscription_uri'] ) ? $existing['webhook_subscription_uri'] : '';
+		$sanitized['webhook_scope']              = isset( $existing['webhook_scope'] ) ? $existing['webhook_scope'] : 'user';
+		$sanitized['webhook_scope_uri']          = isset( $existing['webhook_scope_uri'] ) ? $existing['webhook_scope_uri'] : '';
 		return $sanitized;
 	}
 
@@ -43,47 +44,122 @@ class Settings_Page {
 		}
 	}
 
-	public function handle_actions() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die( 'Unauthorized.' );
-		}
-		check_admin_referer( 'ctfb_action_nonce' );
+	public function handle_test_connection_action() {
+		$this->log_action_entry( 'admin_action_test_connection_entered', 'ctfb_test_connection' );
+		$this->verify_admin_action_security( 'ctfb_test_connection' );
+		$this->update_trace( 'last_test_connection_action_entered_time', current_time( 'mysql' ) );
 
-		$action  = isset( $_POST['ctfb_subaction'] ) ? sanitize_text_field( wp_unslash( $_POST['ctfb_subaction'] ) ) : '';
 		$options = get_option( 'ctfb_options', array() );
 		$client  = new Calendly_Client( isset( $options['pat'] ) ? $options['pat'] : '' );
-		$notice  = '';
-
-		if ( 'test_connection' === $action ) {
-			$notice = $this->test_connection( $client, $options );
-		}
-		if ( 'create_webhook' === $action ) {
-			$notice = $this->create_webhook( $client, $options, false );
-		}
-		if ( 'refresh_webhook' === $action ) {
-			$notice = $this->create_webhook( $client, $options, true );
-		}
-		if ( 'delete_webhook' === $action ) {
-			$notice = $this->delete_webhook( $client, $options );
-		}
-		if ( 'manual_test' === $action ) {
-			$payload = isset( $_POST['manual_payload'] ) ? wp_unslash( $_POST['manual_payload'] ) : '';
-			$data    = json_decode( $payload, true );
-			if ( ! is_array( $data ) ) {
-				$notice = 'Manual payload is not valid JSON.';
-			} else {
-				$commit = ! empty( $_POST['commit_to_database'] );
-				$sync   = new Formidable_Sync();
-				$result = $sync->process( $data, $commit );
-				$notice = $result['message'];
-			}
-		}
-
-		wp_safe_redirect( admin_url( 'options-general.php?page=calendly-to-formidable-bridge&ctfb_notice=' . rawurlencode( $notice ) ) );
-		exit;
+		$notice  = $this->perform_test_connection( $client, $options );
+		$this->redirect_with_notice( $notice, false );
 	}
 
-	private function test_connection( $client, $options ) {
+	public function handle_create_webhook_action() {
+		$this->log_action_entry( 'admin_action_create_webhook_entered', 'ctfb_create_webhook' );
+		$this->verify_admin_action_security( 'ctfb_create_webhook' );
+		$this->update_trace( 'last_create_webhook_action_entered_time', current_time( 'mysql' ) );
+		$result = $this->perform_create_webhook_flow( false );
+		$this->update_trace( 'last_create_webhook_handler_result', $result['message'] );
+		$this->redirect_with_notice( $result['message'], ! empty( $result['is_error'] ) );
+	}
+
+	public function handle_refresh_webhook_action() {
+		$this->log_action_entry( 'admin_action_refresh_webhook_entered', 'ctfb_refresh_webhook' );
+		$this->verify_admin_action_security( 'ctfb_refresh_webhook' );
+		$this->update_trace( 'last_refresh_webhook_action_entered_time', current_time( 'mysql' ) );
+		$result = $this->perform_create_webhook_flow( true );
+		$this->redirect_with_notice( $result['message'], ! empty( $result['is_error'] ) );
+	}
+
+	public function handle_delete_webhook_action() {
+		$this->log_action_entry( 'admin_action_delete_webhook_entered', 'ctfb_delete_webhook' );
+		$this->verify_admin_action_security( 'ctfb_delete_webhook' );
+		$this->update_trace( 'last_delete_webhook_action_entered_time', current_time( 'mysql' ) );
+
+		$options = get_option( 'ctfb_options', array() );
+		$client  = new Calendly_Client( isset( $options['pat'] ) ? $options['pat'] : '' );
+		$notice  = $this->perform_delete_webhook( $client, $options );
+		$this->redirect_with_notice( $notice, false !== stripos( $notice, 'error' ) );
+	}
+
+	public function handle_manual_test_action() {
+		$this->log_action_entry( 'admin_action_manual_test_entered', 'ctfb_manual_test' );
+		$this->verify_admin_action_security( 'ctfb_manual_test' );
+
+		$payload = isset( $_POST['manual_payload'] ) ? wp_unslash( $_POST['manual_payload'] ) : '';
+		$data    = json_decode( $payload, true );
+		Logger::info( 'manual_test_flow', array( 'commit_to_database' => ! empty( $_POST['commit_to_database'] ) ? 'yes' : 'no' ) );
+		Logger::log_raw_payload( $payload );
+		if ( ! is_array( $data ) ) {
+			Logger::error( 'manual_test_invalid_json' );
+			$this->redirect_with_notice( 'Manual payload is not valid JSON.', true );
+		}
+
+		$commit = ! empty( $_POST['commit_to_database'] );
+		$sync   = new Formidable_Sync();
+		$result = $sync->process( $data, $commit, 'manual_test' );
+		$this->redirect_with_notice( $result['message'], empty( $result['ok'] ) );
+	}
+
+	public function handle_clear_log_action() {
+		$this->log_action_entry( 'admin_action_clear_log_entered', 'ctfb_clear_log' );
+		$this->verify_admin_action_security( 'ctfb_clear_log' );
+		$cleared = Logger::clear_log_file();
+		$this->redirect_with_notice( $cleared ? 'Debug log file cleared.' : 'Debug log file could not be cleared.', ! $cleared );
+	}
+
+	public function handle_download_log_action() {
+		$this->log_action_entry( 'admin_action_download_log_entered', 'ctfb_download_log' );
+		$this->verify_admin_action_security( 'ctfb_download_log' );
+		$this->download_log_file();
+	}
+
+	public function handle_test_create_webhook_handler_action() {
+		$this->log_action_entry( 'admin_action_test_create_webhook_handler_entered', 'ctfb_test_create_webhook_handler' );
+		$this->verify_admin_action_security( 'ctfb_test_create_webhook_handler' );
+		Logger::info( 'create_webhook_handler_self_test_reached' );
+		$this->redirect_with_notice( 'Create Webhook handler self-test succeeded.', false );
+	}
+
+	public function handle_preview_create_webhook_payload_action() {
+		$this->log_action_entry( 'admin_action_preview_create_webhook_payload_entered', 'ctfb_preview_create_webhook_payload' );
+		$this->verify_admin_action_security( 'ctfb_preview_create_webhook_payload' );
+
+		$options  = get_option( 'ctfb_options', array() );
+		$token    = isset( $options['pat'] ) ? $options['pat'] : '';
+		$user_uri = Token_Helper::get_user_uri_from_pat( $token );
+		$payload  = array(
+			'url'    => rest_url( 'ctfb/v1/webhook' ),
+			'events' => array( 'invitee.created', 'invitee.canceled' ),
+			'scope'  => 'user',
+			'user'   => $user_uri,
+		);
+
+		Logger::info( 'create_webhook_request_payload_prepared', array( 'payload' => $payload ) );
+		update_option( 'ctfb_preview_create_webhook_payload', $payload );
+		$this->redirect_with_notice( 'Webhook payload preview generated. See Diagnostics section.', false );
+	}
+
+	private function verify_admin_action_security( $nonce_action ) {
+		$can_manage = current_user_can( 'manage_options' );
+		Logger::debug( 'admin_action_before_capability_check', array( 'action' => $nonce_action, 'can_manage_options' => $can_manage ? 'yes' : 'no' ) );
+		if ( ! $can_manage ) {
+			Logger::error( 'admin_action_capability_check_failed', array( 'action' => $nonce_action ) );
+			wp_die( 'Unauthorized.' );
+		}
+		Logger::debug( 'admin_action_after_capability_check', array( 'action' => $nonce_action ) );
+
+		Logger::debug( 'admin_action_before_nonce_validation', array( 'action' => $nonce_action ) );
+		$nonce = isset( $_REQUEST['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['_wpnonce'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( empty( $nonce ) || ! wp_verify_nonce( $nonce, $nonce_action ) ) {
+			Logger::error( 'admin_action_nonce_validation_failed', array( 'action' => $nonce_action, 'reason' => empty( $nonce ) ? 'missing_nonce' : 'invalid_nonce' ) );
+			wp_die( 'Nonce verification failed.' );
+		}
+		Logger::debug( 'admin_action_after_nonce_validation', array( 'action' => $nonce_action ) );
+	}
+
+	private function perform_test_connection( $client, $options ) {
 		if ( empty( $options['pat'] ) ) {
 			update_option( 'ctfb_diagnostics', array( 'last_api_error' => 'Missing Personal Access Token.', 'last_api_check' => current_time( 'mysql' ) ) );
 			return 'Missing Personal Access Token.';
@@ -93,8 +169,11 @@ class Settings_Page {
 			update_option( 'ctfb_diagnostics', array( 'last_api_error' => 'Malformed PAT: user_uuid claim is missing.', 'last_api_check' => current_time( 'mysql' ) ) );
 			return 'Malformed PAT: user_uuid claim is missing.';
 		}
-		$response = $client->get_users_me();
-		$diag     = array(
+		Logger::debug( 'attempting_get_users_me' );
+		$trace    = array();
+		$response = $client->get_users_me( $trace );
+		Logger::debug( 'users_me_response_success_or_failure', array( 'result' => is_wp_error( $response ) ? 'failure' : 'success' ) );
+		$diag = array(
 			'last_api_check' => current_time( 'mysql' ),
 			'pat_user_uuid'  => $uuid,
 			'pat_scopes'     => implode( ', ', Token_Helper::get_scopes_from_pat( $options['pat'] ) ),
@@ -109,7 +188,7 @@ class Settings_Page {
 			return $msg;
 		}
 
-		$resource = isset( $response['resource'] ) ? $response['resource'] : array();
+		$resource                  = isset( $response['resource'] ) ? $response['resource'] : array();
 		$diag['connection_status'] = 'ok';
 		$diag['last_api_error']    = '';
 		$diag['user_name']         = isset( $resource['name'] ) ? $resource['name'] : '';
@@ -119,72 +198,148 @@ class Settings_Page {
 		return 'Connection successful.';
 	}
 
-	private function create_webhook( $client, $options, $refresh ) {
-		if ( empty( $options['pat'] ) ) {
-			return 'Missing Personal Access Token.';
+	private function perform_create_webhook_flow( $refresh ) {
+		Logger::info( 'create_webhook_handler_started', array( 'refresh' => $refresh ? 'yes' : 'no' ) );
+		$options = get_option( 'ctfb_options', array() );
+		Logger::debug( 'settings_loaded_for_create_webhook' );
+
+		$token = isset( $options['pat'] ) ? $options['pat'] : '';
+		Logger::debug( 'token_present_yes_or_no', array( 'present' => empty( $token ) ? 'no' : 'yes' ) );
+		Logger::debug( 'token_masked_preview', array( 'pat' => $this->mask_pat( $token ) ) );
+		if ( empty( $token ) ) {
+			return array( 'is_error' => true, 'message' => 'Missing Personal Access Token.' );
 		}
+
+		$user_uuid = Token_Helper::get_user_uuid_from_pat( $token );
+		Logger::debug( 'derived_user_uuid_from_pat', array( 'user_uuid' => $user_uuid ) );
+		$user_uri = Token_Helper::get_user_uri_from_pat( $token );
+		Logger::debug( 'derived_user_uri_from_pat', array( 'user_uri' => $user_uri ) );
+		if ( empty( $user_uri ) ) {
+			return array( 'is_error' => true, 'message' => 'Malformed PAT: user_uuid claim is missing.' );
+		}
+
+		$client = new Calendly_Client( $token );
+		Logger::debug( 'attempting_get_users_me' );
+		$me_trace = array();
+		$me       = $client->get_users_me( $me_trace );
+		Logger::debug( 'users_me_response_success_or_failure', array( 'result' => is_wp_error( $me ) ? 'failure' : 'success' ) );
+		$org_uri = ( ! is_wp_error( $me ) && ! empty( $me['resource']['current_organization'] ) ) ? $me['resource']['current_organization'] : '';
+		Logger::debug( 'organization_uri_detected', array( 'organization_uri' => $org_uri ) );
+
 		if ( $refresh && ! empty( $options['webhook_subscription_uri'] ) ) {
-			$client->delete_webhook( $options['webhook_subscription_uri'] );
+			$delete_trace = array();
+			$client->delete_webhook( $options['webhook_subscription_uri'], $delete_trace );
 		}
-		$scope_uri = Token_Helper::get_user_uri_from_pat( $options['pat'] );
-		if ( empty( $scope_uri ) ) {
-			return 'Malformed PAT: user_uuid claim is missing.';
+
+		$create_payload = array(
+			'url'    => rest_url( 'ctfb/v1/webhook' ),
+			'events' => array( 'invitee.created', 'invitee.canceled' ),
+			'scope'  => 'user',
+			'user'   => $user_uri,
+		);
+		Logger::info( 'create_webhook_api_call_started' );
+		Logger::info( 'create_webhook_request_payload_prepared', array( 'payload' => $create_payload ) );
+
+		$trace    = array();
+		$response = $client->create_webhook( rest_url( 'ctfb/v1/webhook' ), 'user', $user_uri, $trace );
+		Logger::info(
+			'create_webhook_api_response_received',
+			array(
+				'request_url'       => isset( $trace['request_url'] ) ? $trace['request_url'] : '',
+				'request_method'    => isset( $trace['request_method'] ) ? $trace['request_method'] : 'POST',
+				'auth_header'       => isset( $trace['has_auth_header'] ) ? $trace['has_auth_header'] : 'yes',
+				'request_json_body' => isset( $trace['request_body'] ) ? $trace['request_body'] : '',
+				'http_status_code'  => isset( $trace['http_status'] ) ? $trace['http_status'] : 0,
+				'response_body'     => isset( $trace['response_body'] ) ? $trace['response_body'] : '',
+				'parsed_result'     => isset( $trace['parsed_response'] ) ? $trace['parsed_response'] : '',
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			Logger::error( 'create_webhook_api_success_or_failure', array( 'result' => 'failure', 'reason' => $response->get_error_message() ) );
+			$this->update_trace( 'last_create_webhook_api_status', isset( $trace['http_status'] ) ? (string) $trace['http_status'] : '0' );
+			$this->update_trace( 'last_create_webhook_api_error', $response->get_error_message() );
+			return array( 'is_error' => true, 'message' => $response->get_error_message() );
 		}
-		$response = $client->create_webhook( rest_url( 'ctfb/v1/webhook' ), 'user', $scope_uri );
+
+		Logger::info( 'create_webhook_api_success_or_failure', array( 'result' => 'success' ) );
+		$resource          = isset( $response['resource'] ) ? $response['resource'] : array();
+		$subscription_uri  = isset( $resource['uri'] ) ? esc_url_raw( $resource['uri'] ) : '';
+		Logger::info( 'returned_webhook_subscription_uri_or_id', array( 'subscription_uri' => $subscription_uri ) );
+
+		Logger::debug( 'settings_update_started' );
+		$options['webhook_subscription_uri'] = $subscription_uri;
+		$options['webhook_scope']            = isset( $resource['scope'] ) ? sanitize_text_field( $resource['scope'] ) : 'user';
+		$options['webhook_scope_uri']        = ! empty( $org_uri ) ? esc_url_raw( $org_uri ) : $user_uri;
+		update_option( 'ctfb_options', $options );
+		Logger::debug( 'settings_update_completed' );
+
+		$this->update_trace( 'last_create_webhook_api_status', isset( $trace['http_status'] ) ? (string) $trace['http_status'] : '200' );
+		$this->update_trace( 'last_create_webhook_api_error', '' );
+		$this->update_trace( 'last_saved_webhook_subscription_uri', $subscription_uri );
+
+		$message = $refresh ? 'Webhook refreshed successfully.' : 'Webhook created successfully.';
+		Logger::info( 'redirect_notice_success_or_error', array( 'type' => 'success', 'message' => $message ) );
+		return array( 'is_error' => false, 'message' => $message );
+	}
+
+	private function perform_delete_webhook( $client, $options ) {
+		if ( empty( $options['webhook_subscription_uri'] ) ) {
+			return 'No stored webhook subscription URI to delete.';
+		}
+		$trace    = array();
+		$response = $client->delete_webhook( $options['webhook_subscription_uri'], $trace );
 		if ( is_wp_error( $response ) ) {
 			return $response->get_error_message();
 		}
-		$resource = isset( $response['resource'] ) ? $response['resource'] : array();
-		$options['webhook_subscription_uri'] = isset( $resource['uri'] ) ? $resource['uri'] : '';
-		$options['webhook_scope']            = isset( $resource['scope'] ) ? $resource['scope'] : 'user';
-		$options['webhook_scope_uri']        = $scope_uri;
-		update_option( 'ctfb_options', $options );
-		return $refresh ? 'Webhook refreshed successfully.' : 'Webhook created successfully.';
-	}
-
-	private function delete_webhook( $client, $options ) {
-		if ( ! empty( $options['webhook_subscription_uri'] ) ) {
-			$client->delete_webhook( $options['webhook_subscription_uri'] );
-		}
 		$options['webhook_subscription_uri'] = '';
-		$options['webhook_scope_uri']        = '';
 		update_option( 'ctfb_options', $options );
 		return 'Webhook deleted successfully.';
 	}
 
 	public function render_page() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			return;
-		}
-		$options     = get_option( 'ctfb_options', array() );
-		$diagnostics = get_option( 'ctfb_diagnostics', array() );
-		$bookings    = $this->get_recent_bookings( $options );
+		$options      = get_option( 'ctfb_options', array() );
+		$diagnostics  = get_option( 'ctfb_diagnostics', array() );
+		$bookings     = $this->get_recent_bookings( $options );
+		$log_path     = Logger::get_log_file_path();
+		$log_exists   = file_exists( $log_path );
+		$log_lines    = Logger::read_tail_lines( 50 );
+		$hook_status  = get_option( 'ctfb_admin_action_hook_status', array() );
+		$trace_status = get_option( 'ctfb_admin_action_trace', array() );
+		$payload_prev = get_option( 'ctfb_preview_create_webhook_payload', array() );
+
+		$urls = array(
+			'test_connection' => wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_test_connection' ), 'ctfb_test_connection' ),
+			'create_webhook'  => wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_create_webhook' ), 'ctfb_create_webhook' ),
+			'refresh_webhook' => wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_refresh_webhook' ), 'ctfb_refresh_webhook' ),
+			'delete_webhook'  => wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_delete_webhook' ), 'ctfb_delete_webhook' ),
+		);
+		Logger::debug( 'admin_action_urls_generated', $urls );
 		?>
 		<div class="wrap">
 			<h1>Calendly to Formidable Bridge</h1>
 			<form method="post" action="options.php">
 				<?php settings_fields( 'ctfb_settings_group' ); ?>
 				<table class="form-table">
-					<tr><th>Enable sync</th><td><input type="checkbox" name="ctfb_options[enabled]" value="1" <?php checked( ! empty( $options['enabled'] ) ); ?> /></td></tr>
-					<tr><th>Calendly Personal Access Token</th><td><input type="password" name="ctfb_options[pat]" class="regular-text" value="" placeholder="<?php echo esc_attr( $this->mask_pat( isset( $options['pat'] ) ? $options['pat'] : '' ) ); ?>" /></td></tr>
-					<tr><th>Debug logging</th><td><input type="checkbox" name="ctfb_options[debug_logging]" value="1" <?php checked( ! empty( $options['debug_logging'] ) ); ?> /></td></tr>
-					<tr><th>Fallback company name</th><td><input type="text" name="ctfb_options[fallback_company_name]" class="regular-text" value="<?php echo esc_attr( isset( $options['fallback_company_name'] ) ? $options['fallback_company_name'] : '' ); ?>" /></td></tr>
-					<tr><th>Fallback freight forwarder</th><td><select name="ctfb_options[fallback_freight_forwarder]"><option value="Yes" <?php selected( isset( $options['fallback_freight_forwarder'] ) ? $options['fallback_freight_forwarder'] : 'No', 'Yes' ); ?>>Yes</option><option value="No" <?php selected( isset( $options['fallback_freight_forwarder'] ) ? $options['fallback_freight_forwarder'] : 'No', 'No' ); ?>>No</option></select></td></tr>
-					<tr><th>Default country</th><td><input type="text" name="ctfb_options[default_country]" class="regular-text" value="<?php echo esc_attr( isset( $options['default_country'] ) ? $options['default_country'] : '' ); ?>" /></td></tr>
-					<tr><th>Webhook endpoint URL</th><td><code><?php echo esc_html( rest_url( 'ctfb/v1/webhook' ) ); ?></code><p class="description">Calendly sends booking event data to this webhook URL.</p></td></tr>
+					<tr><th>Enable Sync</th><td><label><input type="checkbox" name="ctfb_options[enabled]" value="1" <?php checked( ! empty( $options['enabled'] ) ); ?> /> Enable syncing of Calendly webhook events to Formidable</label></td></tr>
+					<tr><th>Debug logging</th><td><label><input type="checkbox" name="ctfb_options[debug_logging]" value="1" <?php checked( ! empty( $options['debug_logging'] ) ); ?> /> Enable detailed diagnostics logging</label></td></tr>
+					<tr><th>Calendly Personal Access Token</th><td><input type="password" name="ctfb_options[pat]" value="" class="regular-text" autocomplete="new-password" placeholder="<?php echo esc_attr( isset( $options['pat'] ) && $options['pat'] ? $this->mask_pat( $options['pat'] ) : '' ); ?>" /></td></tr>
+					<tr><th>Fallback Company Name</th><td><input type="text" name="ctfb_options[fallback_company_name]" value="<?php echo esc_attr( isset( $options['fallback_company_name'] ) ? $options['fallback_company_name'] : '' ); ?>" class="regular-text" /></td></tr>
+					<tr><th>Fallback Freight Forwarder</th><td><select name="ctfb_options[fallback_freight_forwarder]"><option value="No" <?php selected( isset( $options['fallback_freight_forwarder'] ) ? $options['fallback_freight_forwarder'] : 'No', 'No' ); ?>>No</option><option value="Yes" <?php selected( isset( $options['fallback_freight_forwarder'] ) ? $options['fallback_freight_forwarder'] : 'No', 'Yes' ); ?>>Yes</option></select></td></tr>
+					<tr><th>Default Country</th><td><input type="text" name="ctfb_options[default_country]" value="<?php echo esc_attr( isset( $options['default_country'] ) ? $options['default_country'] : '' ); ?>" class="regular-text" /></td></tr>
+					<tr><th>Webhook endpoint URL</th><td><code><?php echo esc_html( rest_url( 'ctfb/v1/webhook' ) ); ?></code></td></tr>
+					<tr><th>Ping endpoint URL</th><td><code><?php echo esc_html( rest_url( 'ctfb/v1/ping' ) ); ?></code></td></tr>
 				</table>
 				<?php submit_button( 'Save Settings' ); ?>
 			</form>
 
 			<h2>Actions</h2>
-			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
-				<?php wp_nonce_field( 'ctfb_action_nonce' ); ?>
-				<input type="hidden" name="action" value="ctfb_action" />
-				<button class="button" name="ctfb_subaction" value="test_connection">Test Connection</button>
-				<button class="button" name="ctfb_subaction" value="create_webhook">Create Webhook</button>
-				<button class="button" name="ctfb_subaction" value="refresh_webhook">Refresh Webhook</button>
-				<button class="button" name="ctfb_subaction" value="delete_webhook">Delete Webhook</button>
-			</form>
+			<p><a class="button" href="<?php echo esc_url( $urls['test_connection'] ); ?>">Test Connection</a><br/><small>Action slug: ctfb_test_connection</small></p>
+			<p><a class="button" href="<?php echo esc_url( $urls['create_webhook'] ); ?>">Create Webhook</a><br/><small>Action slug: ctfb_create_webhook</small></p>
+			<p><a class="button" href="<?php echo esc_url( $urls['refresh_webhook'] ); ?>">Refresh Webhook</a><br/><small>Action slug: ctfb_refresh_webhook</small></p>
+			<p><a class="button" href="<?php echo esc_url( $urls['delete_webhook'] ); ?>">Delete Webhook</a><br/><small>Action slug: ctfb_delete_webhook</small></p>
+			<p><a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_test_create_webhook_handler' ), 'ctfb_test_create_webhook_handler' ) ); ?>">Test Create Webhook Handler</a></p>
+			<p><a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_preview_create_webhook_payload' ), 'ctfb_preview_create_webhook_payload' ) ); ?>">Preview Create Webhook Payload</a></p>
 
 			<h2>Recent Bookings</h2>
 			<table class="widefat striped"><thead><tr><th>Invitee Name</th><th>Invitee Email</th><th>Event Name</th><th>Start Time</th><th>Status</th></tr></thead><tbody>
@@ -195,29 +350,55 @@ class Settings_Page {
 
 			<h2>Diagnostics</h2>
 			<table class="widefat striped">
-			<tr><td>Formidable active</td><td><?php echo class_exists( 'FrmEntry' ) ? 'Yes' : 'No'; ?></td></tr>
-			<tr><td>Form ID 4 ready</td><td><?php echo class_exists( 'FrmForm' ) && \FrmForm::getOne( 4 ) ? 'Yes' : 'No'; ?></td></tr>
-			<tr><td>Webhook endpoint URL</td><td><?php echo esc_html( rest_url( 'ctfb/v1/webhook' ) ); ?></td></tr>
-			<tr><td>Stored webhook subscription URI or ID</td><td><?php echo esc_html( isset( $options['webhook_subscription_uri'] ) ? $options['webhook_subscription_uri'] : '' ); ?></td></tr>
-			<tr><td>Connection status</td><td><?php echo esc_html( isset( $diagnostics['connection_status'] ) ? $diagnostics['connection_status'] : 'unknown' ); ?></td></tr>
-			<tr><td>Last API check time</td><td><?php echo esc_html( isset( $diagnostics['last_api_check'] ) ? $diagnostics['last_api_check'] : '' ); ?></td></tr>
-			<tr><td>Last API error</td><td><?php echo esc_html( isset( $diagnostics['last_api_error'] ) ? $diagnostics['last_api_error'] : '' ); ?></td></tr>
-			<tr><td>Recent bookings count</td><td><?php echo esc_html( count( $bookings ) ); ?></td></tr>
-			<tr><td>Last successful sync time</td><td><?php echo esc_html( get_option( 'ctfb_last_successful_sync', '' ) ); ?></td></tr>
-			<tr><td>Last error</td><td><?php echo esc_html( get_option( 'ctfb_last_error', '' ) ); ?></td></tr>
-			<tr><td>Last processed email</td><td><?php echo esc_html( get_option( 'ctfb_last_processed_email', '' ) ); ?></td></tr>
-			<tr><td>PAT user UUID if extracted</td><td><?php echo esc_html( Token_Helper::get_user_uuid_from_pat( isset( $options['pat'] ) ? $options['pat'] : '' ) ); ?></td></tr>
-			<tr><td>PAT scopes if extracted</td><td><?php echo esc_html( implode( ', ', Token_Helper::get_scopes_from_pat( isset( $options['pat'] ) ? $options['pat'] : '' ) ) ); ?></td></tr>
+				<tr><td>Formidable active</td><td><?php echo class_exists( 'FrmEntry' ) ? 'Yes' : 'No'; ?></td></tr>
+				<tr><td>Form ID 4 ready</td><td><?php echo class_exists( 'FrmForm' ) && \FrmForm::getOne( 4 ) ? 'Yes' : 'No'; ?></td></tr>
+				<tr><td>Webhook endpoint URL</td><td><?php echo esc_html( rest_url( 'ctfb/v1/webhook' ) ); ?></td></tr>
+				<tr><td>Stored webhook subscription URI or ID</td><td><?php echo esc_html( isset( $options['webhook_subscription_uri'] ) ? $options['webhook_subscription_uri'] : '' ); ?></td></tr>
+				<tr><td>Create webhook action registered</td><td><?php echo ( isset( $hook_status['create'] ) && 'yes' === $hook_status['create'] ) ? 'Yes' : 'No'; ?></td></tr>
+				<tr><td>Refresh webhook action registered</td><td><?php echo ( isset( $hook_status['refresh'] ) && 'yes' === $hook_status['refresh'] ) ? 'Yes' : 'No'; ?></td></tr>
+				<tr><td>Delete webhook action registered</td><td><?php echo ( isset( $hook_status['delete'] ) && 'yes' === $hook_status['delete'] ) ? 'Yes' : 'No'; ?></td></tr>
+				<tr><td>Test connection action registered</td><td><?php echo ( isset( $hook_status['test'] ) && 'yes' === $hook_status['test'] ) ? 'Yes' : 'No'; ?></td></tr>
+				<tr><td>Connection status</td><td><?php echo esc_html( isset( $diagnostics['connection_status'] ) ? $diagnostics['connection_status'] : 'unknown' ); ?></td></tr>
+				<tr><td>Last API check time</td><td><?php echo esc_html( isset( $diagnostics['last_api_check'] ) ? $diagnostics['last_api_check'] : '' ); ?></td></tr>
+				<tr><td>Last API error</td><td><?php echo esc_html( isset( $diagnostics['last_api_error'] ) ? $diagnostics['last_api_error'] : '' ); ?></td></tr>
+				<tr><td>Debug log file path</td><td><code><?php echo esc_html( $log_path ); ?></code></td></tr>
+				<tr><td>Debug log file exists</td><td><?php echo $log_exists ? 'Yes' : 'No'; ?></td></tr>
+				<tr><td>Debug log file writable</td><td><?php echo ( file_exists( $log_path ) && is_writable( $log_path ) ) || ( ! file_exists( $log_path ) && is_writable( WP_CONTENT_DIR ) ) ? 'Yes' : 'No'; ?></td></tr>
+				<tr><td>Debug log file size</td><td><?php echo $log_exists ? esc_html( size_format( filesize( $log_path ) ) ) : '0 B'; ?></td></tr>
+				<tr><td>Debug log last modified</td><td><?php echo $log_exists ? esc_html( gmdate( 'Y-m-d H:i:s', filemtime( $log_path ) ) . ' UTC' ) : ''; ?></td></tr>
 			</table>
+
+			<h3>Admin Action Trace</h3>
+			<table class="widefat striped">
+				<tr><td>Last create webhook action entered time</td><td><?php echo esc_html( isset( $trace_status['last_create_webhook_action_entered_time'] ) ? $trace_status['last_create_webhook_action_entered_time'] : '' ); ?></td></tr>
+				<tr><td>Last refresh webhook action entered time</td><td><?php echo esc_html( isset( $trace_status['last_refresh_webhook_action_entered_time'] ) ? $trace_status['last_refresh_webhook_action_entered_time'] : '' ); ?></td></tr>
+				<tr><td>Last delete webhook action entered time</td><td><?php echo esc_html( isset( $trace_status['last_delete_webhook_action_entered_time'] ) ? $trace_status['last_delete_webhook_action_entered_time'] : '' ); ?></td></tr>
+				<tr><td>Last test connection action entered time</td><td><?php echo esc_html( isset( $trace_status['last_test_connection_action_entered_time'] ) ? $trace_status['last_test_connection_action_entered_time'] : '' ); ?></td></tr>
+				<tr><td>Last create webhook handler result</td><td><?php echo esc_html( isset( $trace_status['last_create_webhook_handler_result'] ) ? $trace_status['last_create_webhook_handler_result'] : '' ); ?></td></tr>
+				<tr><td>Last create webhook API status</td><td><?php echo esc_html( isset( $trace_status['last_create_webhook_api_status'] ) ? $trace_status['last_create_webhook_api_status'] : '' ); ?></td></tr>
+				<tr><td>Last create webhook API error</td><td><?php echo esc_html( isset( $trace_status['last_create_webhook_api_error'] ) ? $trace_status['last_create_webhook_api_error'] : '' ); ?></td></tr>
+				<tr><td>Last saved webhook subscription URI</td><td><?php echo esc_html( isset( $trace_status['last_saved_webhook_subscription_uri'] ) ? $trace_status['last_saved_webhook_subscription_uri'] : '' ); ?></td></tr>
+			</table>
+
+			<?php if ( ! empty( $payload_prev ) ) : ?>
+				<h3>Create Webhook Payload Preview</h3>
+				<textarea rows="8" style="width:100%;" readonly="readonly"><?php echo esc_textarea( wp_json_encode( $payload_prev, JSON_PRETTY_PRINT ) ); ?></textarea>
+			<?php endif; ?>
+
+			<p>
+				<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_clear_log' ), 'ctfb_clear_log' ) ); ?>">Clear Debug Log</a>
+				<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_download_log' ), 'ctfb_download_log' ) ); ?>">Download Debug Log</a>
+			</p>
+
+			<h3>Debug log preview (last 50 lines)</h3>
+			<textarea readonly="readonly" rows="12" style="width:100%;"><?php echo esc_textarea( implode( "\n", $log_lines ) ); ?></textarea>
 
 			<h3>Recent sync attempts table</h3>
 			<?php $this->render_logs_table(); ?>
 
 			<h2>Manual Payload Test</h2>
-			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
-				<?php wp_nonce_field( 'ctfb_action_nonce' ); ?>
-				<input type="hidden" name="action" value="ctfb_action" />
-				<input type="hidden" name="ctfb_subaction" value="manual_test" />
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php?action=ctfb_manual_test' ) ); ?>">
+				<?php wp_nonce_field( 'ctfb_manual_test' ); ?>
 				<textarea name="manual_payload" rows="8" style="width:100%;"></textarea>
 				<p><label><input type="checkbox" name="commit_to_database" value="1" /> Commit to database</label></p>
 				<?php submit_button( 'Run Manual Test' ); ?>
@@ -252,9 +433,9 @@ class Settings_Page {
 
 		$rows = array();
 		foreach ( $events['collection'] as $event ) {
-			$inv = $client->get_event_invitees( isset( $event['uri'] ) ? $event['uri'] : '', 1 );
+			$inv     = $client->get_event_invitees( isset( $event['uri'] ) ? $event['uri'] : '', 1 );
 			$invitee = ( ! is_wp_error( $inv ) && ! empty( $inv['collection'][0] ) ) ? $inv['collection'][0] : array();
-			$rows[] = array(
+			$rows[]  = array(
 				'name'   => isset( $invitee['name'] ) ? $invitee['name'] : '',
 				'email'  => isset( $invitee['email'] ) ? $invitee['email'] : '',
 				'event'  => isset( $event['name'] ) ? $event['name'] : '',
@@ -263,6 +444,45 @@ class Settings_Page {
 			);
 		}
 		return $rows;
+	}
+
+	private function download_log_file() {
+		$path = Logger::get_log_file_path();
+		if ( ! file_exists( $path ) || ! is_readable( $path ) ) {
+			$this->redirect_with_notice( 'Debug log file is not available.', true );
+		}
+		header( 'Content-Type: text/plain; charset=utf-8' );
+		header( 'Content-Disposition: attachment; filename="ctfb-debug.txt"' );
+		header( 'Content-Length: ' . filesize( $path ) );
+		readfile( $path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_readfile
+		exit;
+	}
+
+	private function log_action_entry( $event_name, $action_name ) {
+		Logger::info(
+			$event_name,
+			array(
+				'current_user_id'      => get_current_user_id(),
+				'request_uri'          => isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '', // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotValidated
+				'action_name'          => $action_name,
+				'nonce_present'        => isset( $_REQUEST['_wpnonce'] ) ? 'yes' : 'no', // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				'can_manage_options'   => current_user_can( 'manage_options' ) ? 'yes' : 'no',
+			)
+		);
+	}
+
+	private function redirect_with_notice( $message, $is_error ) {
+		$type         = $is_error ? 'error' : 'success';
+		$redirect_url = admin_url( 'options-general.php?page=calendly-to-formidable-bridge&ctfb_notice=' . rawurlencode( $message ) );
+		Logger::info( 'redirect_with_notice', array( 'redirect_type' => $type, 'redirect_message' => $message, 'redirect_url' => $redirect_url ) );
+		wp_safe_redirect( $redirect_url );
+		exit;
+	}
+
+	private function update_trace( $key, $value ) {
+		$trace         = get_option( 'ctfb_admin_action_trace', array() );
+		$trace[ $key ] = $value;
+		update_option( 'ctfb_admin_action_trace', $trace );
 	}
 
 	private function mask_pat( $token ) {
