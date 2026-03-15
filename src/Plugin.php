@@ -37,6 +37,7 @@ class Plugin {
 		add_action( 'admin_post_ctfb_refresh_webhook', array( $settings, 'handle_refresh_webhook_action' ) );
 		add_action( 'admin_post_ctfb_delete_webhook', array( $settings, 'handle_delete_webhook_action' ) );
 		add_action( 'admin_post_ctfb_manual_test', array( $settings, 'handle_manual_test_action' ) );
+		add_action( 'admin_post_ctfb_replay_last_live_webhook', array( $settings, 'handle_replay_last_live_webhook_action' ) );
 		add_action( 'admin_post_ctfb_clear_log', array( $settings, 'handle_clear_log_action' ) );
 		add_action( 'admin_post_ctfb_download_log', array( $settings, 'handle_download_log_action' ) );
 		add_action( 'admin_post_ctfb_test_create_webhook_handler', array( $settings, 'handle_test_create_webhook_handler_action' ) );
