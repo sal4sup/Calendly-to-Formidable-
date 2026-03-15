@@ -37,6 +37,35 @@ class Settings_Page {
 		$sanitized['webhook_user_uri']           = isset( $existing['webhook_user_uri'] ) ? $existing['webhook_user_uri'] : '';
 		$sanitized['webhook_organization_uri']   = isset( $existing['webhook_organization_uri'] ) ? $existing['webhook_organization_uri'] : '';
 		$sanitized['allowed_event_types']        = $this->sanitize_allowed_event_types( $input, $existing );
+
+		$sanitized = $this->preserve_existing_webhook_state( $sanitized, $existing );
+		return $sanitized;
+	}
+
+	private function preserve_existing_webhook_state( $sanitized, $existing ) {
+		$keys = array(
+			'webhook_subscription_uri',
+			'webhook_scope',
+			'webhook_scope_uri',
+			'webhook_user_uri',
+			'webhook_organization_uri',
+		);
+
+		foreach ( $keys as $key ) {
+			$existing_value  = isset( $existing[ $key ] ) ? (string) $existing[ $key ] : '';
+			$sanitized_value = isset( $sanitized[ $key ] ) ? (string) $sanitized[ $key ] : '';
+			if ( '' !== $existing_value && '' === $sanitized_value ) {
+				$sanitized[ $key ] = $existing_value;
+				Logger::warning(
+					'webhook_state_reset_prevented_during_settings_sanitize',
+					array(
+						'key'            => $key,
+						'existing_value' => $existing_value,
+					)
+				);
+			}
+		}
+
 		return $sanitized;
 	}
 
@@ -305,29 +334,26 @@ class Settings_Page {
 			return array( 'is_error' => true, 'message' => 'Webhook creation failed: ' . $error_msg );
 		}
 
-		$resource         = isset( $response['resource'] ) ? $response['resource'] : array();
-		$subscription_uri = isset( $resource['uri'] ) ? esc_url_raw( $resource['uri'] ) : '';
-		$subscription_id  = isset( $resource['id'] ) ? sanitize_text_field( $resource['id'] ) : '';
-		$saved_id_or_uri  = ! empty( $subscription_uri ) ? $subscription_uri : $subscription_id;
-
-		$options['webhook_subscription_uri'] = $saved_id_or_uri;
-		$options['webhook_scope']            = isset( $resource['scope'] ) ? sanitize_text_field( $resource['scope'] ) : 'user';
-		$options['webhook_scope_uri']        = $context['user_uri'];
-		$options['webhook_user_uri']         = $context['user_uri'];
-		$options['webhook_organization_uri'] = $context['organization_uri'];
+		$resource        = isset( $response['resource'] ) ? $response['resource'] : array();
+		$webhook_state   = $this->extract_webhook_state_from_creation_response( $resource, $context );
+		$saved_id_or_uri = $webhook_state['webhook_subscription_uri'];
 
 		Logger::debug( 'webhook_settings_persist_started' );
-		update_option( 'ctfb_options', $options );
-		$persisted = get_option( 'ctfb_options', array() );
+		Logger::debug( 'webhook_settings_persist_values_before_update_option', $webhook_state );
+		$persisted = $this->persist_webhook_state( $webhook_state );
 		Logger::debug(
 			'webhook_settings_persist_completed',
 			array(
 				'saved_webhook_subscription_uri' => isset( $persisted['webhook_subscription_uri'] ) ? $persisted['webhook_subscription_uri'] : '',
+				'saved_webhook_scope'            => isset( $persisted['webhook_scope'] ) ? $persisted['webhook_scope'] : '',
+				'saved_webhook_scope_uri'        => isset( $persisted['webhook_scope_uri'] ) ? $persisted['webhook_scope_uri'] : '',
 				'saved_webhook_user_uri'         => isset( $persisted['webhook_user_uri'] ) ? $persisted['webhook_user_uri'] : '',
 				'saved_webhook_organization_uri' => isset( $persisted['webhook_organization_uri'] ) ? $persisted['webhook_organization_uri'] : '',
 			)
 		);
 		Logger::debug( 'saved_webhook_subscription_uri', array( 'value' => isset( $persisted['webhook_subscription_uri'] ) ? $persisted['webhook_subscription_uri'] : '' ) );
+		Logger::debug( 'saved_webhook_scope', array( 'value' => isset( $persisted['webhook_scope'] ) ? $persisted['webhook_scope'] : '' ) );
+		Logger::debug( 'saved_webhook_scope_uri', array( 'value' => isset( $persisted['webhook_scope_uri'] ) ? $persisted['webhook_scope_uri'] : '' ) );
 		Logger::debug( 'saved_webhook_user_uri', array( 'value' => isset( $persisted['webhook_user_uri'] ) ? $persisted['webhook_user_uri'] : '' ) );
 		Logger::debug( 'saved_webhook_organization_uri', array( 'value' => isset( $persisted['webhook_organization_uri'] ) ? $persisted['webhook_organization_uri'] : '' ) );
 
@@ -336,7 +362,7 @@ class Settings_Page {
 		$this->update_trace( 'last_saved_webhook_subscription_uri', $saved_id_or_uri );
 		$this->update_webhook_diagnostics( 'success', '' );
 
-		Logger::info( 'create_webhook_api_success', array( 'subscription' => $saved_id_or_uri, 'scope' => $options['webhook_scope'], 'scope_uri' => $options['webhook_scope_uri'], 'organization_uri' => $options['webhook_organization_uri'] ), true );
+		Logger::info( 'create_webhook_api_success', array( 'subscription' => $saved_id_or_uri, 'scope' => $webhook_state['webhook_scope'], 'scope_uri' => $webhook_state['webhook_scope_uri'], 'organization_uri' => $webhook_state['webhook_organization_uri'] ), true );
 
 		$message = $refresh ? 'Webhook refreshed successfully.' : 'Webhook created successfully.';
 		return array( 'is_error' => false, 'message' => $message );
@@ -384,6 +410,89 @@ class Settings_Page {
 			'user'         => $user_uri,
 			'organization' => $organization_uri,
 		);
+	}
+
+	private function extract_webhook_state_from_creation_response( $resource, $context ) {
+		$subscription_uri = isset( $resource['uri'] ) ? esc_url_raw( $resource['uri'] ) : '';
+		$subscription_id  = isset( $resource['id'] ) ? sanitize_text_field( $resource['id'] ) : '';
+		$scope            = isset( $resource['scope'] ) ? sanitize_text_field( $resource['scope'] ) : 'user';
+		$scope_uri        = isset( $resource['user'] ) ? esc_url_raw( $resource['user'] ) : '';
+		$user_uri         = isset( $resource['user'] ) ? esc_url_raw( $resource['user'] ) : '';
+		$organization_uri = isset( $resource['organization'] ) ? esc_url_raw( $resource['organization'] ) : '';
+
+		if ( empty( $scope_uri ) && ! empty( $context['user_uri'] ) ) {
+			$scope_uri = esc_url_raw( $context['user_uri'] );
+		}
+		if ( empty( $user_uri ) && ! empty( $context['user_uri'] ) ) {
+			$user_uri = esc_url_raw( $context['user_uri'] );
+		}
+		if ( empty( $organization_uri ) && ! empty( $context['organization_uri'] ) ) {
+			$organization_uri = esc_url_raw( $context['organization_uri'] );
+		}
+
+		return array(
+			'webhook_subscription_uri' => ! empty( $subscription_uri ) ? $subscription_uri : $subscription_id,
+			'webhook_scope'            => $scope,
+			'webhook_scope_uri'        => $scope_uri,
+			'webhook_user_uri'         => $user_uri,
+			'webhook_organization_uri' => $organization_uri,
+		);
+	}
+
+	private function persist_webhook_state( $webhook_state ) {
+		$options = get_option( 'ctfb_options', array() );
+		if ( ! is_array( $options ) ) {
+			$options = array();
+		}
+
+		$options['webhook_subscription_uri'] = isset( $webhook_state['webhook_subscription_uri'] ) ? $webhook_state['webhook_subscription_uri'] : '';
+		$options['webhook_scope']            = isset( $webhook_state['webhook_scope'] ) ? $webhook_state['webhook_scope'] : 'user';
+		$options['webhook_scope_uri']        = isset( $webhook_state['webhook_scope_uri'] ) ? $webhook_state['webhook_scope_uri'] : '';
+		$options['webhook_user_uri']         = isset( $webhook_state['webhook_user_uri'] ) ? $webhook_state['webhook_user_uri'] : '';
+		$options['webhook_organization_uri'] = isset( $webhook_state['webhook_organization_uri'] ) ? $webhook_state['webhook_organization_uri'] : '';
+
+		update_option( 'ctfb_options', $options );
+
+		$persisted = get_option( 'ctfb_options', array() );
+		Logger::debug(
+			'webhook_settings_persist_values_after_update_option',
+			array(
+				'webhook_subscription_uri' => isset( $persisted['webhook_subscription_uri'] ) ? $persisted['webhook_subscription_uri'] : '',
+				'webhook_scope'            => isset( $persisted['webhook_scope'] ) ? $persisted['webhook_scope'] : '',
+				'webhook_scope_uri'        => isset( $persisted['webhook_scope_uri'] ) ? $persisted['webhook_scope_uri'] : '',
+				'webhook_user_uri'         => isset( $persisted['webhook_user_uri'] ) ? $persisted['webhook_user_uri'] : '',
+				'webhook_organization_uri' => isset( $persisted['webhook_organization_uri'] ) ? $persisted['webhook_organization_uri'] : '',
+			)
+		);
+
+		$this->log_webhook_state_persistence_mismatch( $webhook_state, $persisted );
+
+		return $persisted;
+	}
+
+	private function log_webhook_state_persistence_mismatch( $expected, $persisted ) {
+		$keys = array(
+			'webhook_subscription_uri',
+			'webhook_scope',
+			'webhook_scope_uri',
+			'webhook_user_uri',
+			'webhook_organization_uri',
+		);
+
+		foreach ( $keys as $key ) {
+			$expected_value  = isset( $expected[ $key ] ) ? (string) $expected[ $key ] : '';
+			$persisted_value = isset( $persisted[ $key ] ) ? (string) $persisted[ $key ] : '';
+			if ( '' !== $expected_value && '' === $persisted_value ) {
+				Logger::error(
+					'webhook_state_persistence_mismatch_detected',
+					array(
+						'key'            => $key,
+						'expected_value' => $expected_value,
+						'persisted_value' => $persisted_value,
+					)
+				);
+			}
+		}
 	}
 
 	private function update_webhook_diagnostics( $result, $error ) {
