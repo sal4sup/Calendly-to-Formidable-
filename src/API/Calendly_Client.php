@@ -43,13 +43,27 @@ class Calendly_Client {
 		return $this->request( 'GET', '/webhook_subscriptions?scope=user&user=' . rawurlencode( $user_uri ) );
 	}
 
+	public function list_organization_webhooks( $organization_uri ) {
+		return $this->request( 'GET', '/webhook_subscriptions?scope=organization&organization=' . rawurlencode( $organization_uri ) );
+	}
+
 	public function get_scheduled_events( $user_uri, $count = 10 ) {
 		$path = '/scheduled_events?user=' . rawurlencode( $user_uri ) . '&count=' . absint( $count ) . '&sort=start_time:desc';
 		return $this->request( 'GET', $path );
 	}
 
+	public function get_scheduled_events_by_organization( $organization_uri, $count = 10 ) {
+		$path = '/scheduled_events?organization=' . rawurlencode( $organization_uri ) . '&count=' . absint( $count ) . '&sort=start_time:desc';
+		return $this->request( 'GET', $path );
+	}
+
 	public function get_event_types( $user_uri, $count = 100 ) {
 		$path = '/event_types?user=' . rawurlencode( $user_uri ) . '&count=' . absint( $count ) . '&sort=name:asc';
+		return $this->request( 'GET', $path );
+	}
+
+	public function get_event_types_by_organization( $organization_uri, $count = 100 ) {
+		$path = '/event_types?organization=' . rawurlencode( $organization_uri ) . '&count=' . absint( $count ) . '&sort=name:asc';
 		return $this->request( 'GET', $path );
 	}
 

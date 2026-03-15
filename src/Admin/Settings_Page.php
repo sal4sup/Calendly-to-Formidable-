@@ -308,7 +308,7 @@ class Settings_Page {
 		Logger::info( 'create_webhook_request_payload_prepared', array( 'payload' => $payload ), true );
 
 		$trace    = array();
-		$response = $client->create_webhook( $payload['url'], 'user', $context['user_uri'], $context['organization_uri'], $trace );
+		$response = $client->create_webhook( $payload['url'], 'organization', $context['user_uri'], $context['organization_uri'], $trace );
 		Logger::info(
 			'create_webhook_api_response_received',
 			array(
@@ -406,7 +406,7 @@ class Settings_Page {
 		return array(
 			'url'          => rest_url( 'ctfb/v1/webhook' ),
 			'events'       => array( 'invitee.created', 'invitee.canceled' ),
-			'scope'        => 'user',
+			'scope'        => 'organization',
 			'user'         => $user_uri,
 			'organization' => $organization_uri,
 		);
@@ -558,7 +558,7 @@ class Settings_Page {
 								<select name="ctfb_options[allowed_event_types][]" multiple="multiple" style="min-width: 420px; min-height: 140px;">
 									<?php foreach ( $event_type_options as $event_type_option ) : ?>
 										<?php $uri = isset( $event_type_option['uri'] ) ? $event_type_option['uri'] : ''; ?>
-										<?php $label = isset( $event_type_option['name'] ) ? $event_type_option['name'] : $uri; ?>
+										<?php $label = isset( $event_type_option['label'] ) ? $event_type_option['label'] : ( isset( $event_type_option['name'] ) ? $event_type_option['name'] : $uri ); ?>
 										<option value="<?php echo esc_attr( $uri ); ?>" <?php selected( in_array( $uri, $allowed_event_type_uris, true ) ); ?>><?php echo esc_html( $label ); ?></option>
 									<?php endforeach; ?>
 								</select>
@@ -605,6 +605,10 @@ class Settings_Page {
 				<tr><td>Last API error</td><td><?php echo esc_html( isset( $diagnostics['last_api_error'] ) ? $diagnostics['last_api_error'] : '' ); ?></td></tr>
 				<tr><td>Allowed event types count</td><td><?php echo esc_html( count( $allowed_event_type_uris ) ); ?></td></tr>
 				<tr><td>Allowed event type URIs</td><td><?php echo esc_html( implode( ', ', $allowed_event_type_uris ) ); ?></td></tr>
+				<tr><td>Event type sources used</td><td><?php echo esc_html( isset( $diagnostics['event_type_sources_used'] ) ? $diagnostics['event_type_sources_used'] : '' ); ?></td></tr>
+				<tr><td>Organization event types loaded count</td><td><?php echo esc_html( isset( $diagnostics['organization_event_types_loaded_count'] ) ? (int) $diagnostics['organization_event_types_loaded_count'] : 0 ); ?></td></tr>
+				<tr><td>User event types loaded count</td><td><?php echo esc_html( isset( $diagnostics['user_event_types_loaded_count'] ) ? (int) $diagnostics['user_event_types_loaded_count'] : 0 ); ?></td></tr>
+				<tr><td>Merged unique event types count</td><td><?php echo esc_html( isset( $diagnostics['merged_unique_event_types_count'] ) ? (int) $diagnostics['merged_unique_event_types_count'] : 0 ); ?></td></tr>
 				<tr><td>Last successful sync time</td><td><?php echo esc_html( get_option( 'ctfb_last_successful_sync', '' ) ); ?></td></tr>
 				<tr><td>Last processed email</td><td><?php echo esc_html( get_option( 'ctfb_last_processed_email', '' ) ); ?></td></tr>
 				<tr><td>Last error</td><td><?php echo esc_html( get_option( 'ctfb_last_error', '' ) ); ?></td></tr>
@@ -687,33 +691,71 @@ class Settings_Page {
 		if ( empty( $options['pat'] ) ) {
 			return array();
 		}
-		$client   = new Calendly_Client( $options['pat'] );
-		$user_uri = Token_Helper::get_user_uri_from_pat( $options['pat'] );
-		if ( empty( $user_uri ) ) {
-			return array();
+
+		$client           = new Calendly_Client( $options['pat'] );
+		$user_uri         = Token_Helper::get_user_uri_from_pat( $options['pat'] );
+		$organization_uri = $this->get_organization_uri( $options, $client );
+
+		$events_by_uri = array();
+
+		if ( ! empty( $user_uri ) ) {
+			$user_events = $client->get_scheduled_events( $user_uri, 25 );
+			if ( ! is_wp_error( $user_events ) && ! empty( $user_events['collection'] ) && is_array( $user_events['collection'] ) ) {
+				foreach ( $user_events['collection'] as $event ) {
+					$event_uri = isset( $event['uri'] ) ? esc_url_raw( (string) $event['uri'] ) : '';
+					if ( '' !== $event_uri ) {
+						$event['ctfb_event_source'] = 'user';
+						$events_by_uri[ $event_uri ] = $event;
+					}
+				}
+			}
 		}
-		$events = $client->get_scheduled_events( $user_uri, 10 );
-		if ( is_wp_error( $events ) || empty( $events['collection'] ) ) {
+
+		if ( ! empty( $organization_uri ) ) {
+			$org_events = $client->get_scheduled_events_by_organization( $organization_uri, 25 );
+			if ( ! is_wp_error( $org_events ) && ! empty( $org_events['collection'] ) && is_array( $org_events['collection'] ) ) {
+				foreach ( $org_events['collection'] as $event ) {
+					$event_uri = isset( $event['uri'] ) ? esc_url_raw( (string) $event['uri'] ) : '';
+					if ( '' !== $event_uri ) {
+						$event['ctfb_event_source'] = 'organization';
+						$events_by_uri[ $event_uri ] = $event;
+					}
+				}
+			}
+		}
+
+		if ( empty( $events_by_uri ) ) {
 			return array();
 		}
 
 		$rows = array();
-		foreach ( $events['collection'] as $event ) {
+		foreach ( $events_by_uri as $event ) {
 			$event_type_uri = isset( $event['event_type'] ) ? esc_url_raw( (string) $event['event_type'] ) : '';
-			Logger::debug( 'recent_booking_event_type_detected', array( 'event_type_uri' => $event_type_uri ) );
+			$event_source   = isset( $event['ctfb_event_source'] ) ? sanitize_text_field( (string) $event['ctfb_event_source'] ) : 'unknown';
+			$pooling_type   = isset( $event['pooling_type'] ) ? sanitize_text_field( (string) $event['pooling_type'] ) : '';
+
+			Logger::debug(
+				'recent_booking_event_evaluated',
+				array(
+					'event_type_uri' => $event_type_uri,
+					'event_name'     => isset( $event['name'] ) ? sanitize_text_field( (string) $event['name'] ) : '',
+					'pooling_type'   => $pooling_type,
+					'event_source'   => $event_source,
+				)
+			);
 
 			if ( ! empty( $allowed_event_types ) ) {
 				if ( empty( $event_type_uri ) ) {
-					Logger::debug( 'recent_booking_filter_excluded', array( 'reason' => 'missing_event_type', 'event_name' => isset( $event['name'] ) ? $event['name'] : '' ) );
+					Logger::debug( 'recent_booking_filter_excluded', array( 'reason' => 'missing_event_type', 'event_name' => isset( $event['name'] ) ? sanitize_text_field( (string) $event['name'] ) : '', 'event_source' => $event_source ) );
 					continue;
 				}
 				if ( ! in_array( $event_type_uri, $allowed_event_types, true ) ) {
-					Logger::debug( 'recent_booking_filter_excluded', array( 'reason' => 'not_allowed_event_type', 'event_type_uri' => $event_type_uri ) );
+					Logger::debug( 'recent_booking_filter_excluded', array( 'reason' => 'not_allowed_event_type', 'event_type_uri' => $event_type_uri, 'event_source' => $event_source ) );
 					continue;
 				}
 			}
 
-			Logger::debug( 'recent_booking_filter_included', array( 'event_type_uri' => $event_type_uri ) );
+			Logger::debug( 'recent_booking_filter_included', array( 'event_type_uri' => $event_type_uri, 'event_source' => $event_source, 'pooling_type' => $pooling_type ) );
 			$inv     = $client->get_event_invitees( isset( $event['uri'] ) ? $event['uri'] : '', 1 );
 			$invitee = ( ! is_wp_error( $inv ) && ! empty( $inv['collection'][0] ) ) ? $inv['collection'][0] : array();
 			$rows[]  = array(
@@ -724,7 +766,15 @@ class Settings_Page {
 				'status' => isset( $invitee['status'] ) ? $invitee['status'] : 'active',
 			);
 		}
-		return $rows;
+
+		usort(
+			$rows,
+			function ( $a, $b ) {
+				return strcmp( (string) $b['start'], (string) $a['start'] );
+			}
+		);
+
+		return array_slice( $rows, 0, 10 );
 	}
 
 	private function get_allowed_event_types_from_options( $options ) {
@@ -748,44 +798,171 @@ class Settings_Page {
 			return array(
 				'event_types' => array(),
 				'error'       => 'Personal Access Token is required to load event types.',
+				'diagnostics' => array(),
 			);
 		}
 
-		$user_uri = Token_Helper::get_user_uri_from_pat( $options['pat'] );
-		if ( empty( $user_uri ) ) {
+		$client           = new Calendly_Client( $options['pat'] );
+		$user_uri         = Token_Helper::get_user_uri_from_pat( $options['pat'] );
+		$organization_uri = $this->get_organization_uri( $options, $client );
+
+		if ( empty( $user_uri ) && empty( $organization_uri ) ) {
 			return array(
 				'event_types' => array(),
-				'error'       => 'Could not determine user URI from Personal Access Token.',
+				'error'       => 'Could not determine user or organization URI from Personal Access Token.',
+				'diagnostics' => array(),
 			);
 		}
 
-		$client   = new Calendly_Client( $options['pat'] );
-		$response = $client->get_event_types( $user_uri, 100 );
-		if ( is_wp_error( $response ) ) {
-			return array(
-				'event_types' => array(),
-				'error'       => $response->get_error_message(),
-			);
+		$user_collection = array();
+		$org_collection  = array();
+		$error_messages  = array();
+
+		if ( ! empty( $user_uri ) ) {
+			$user_response = $client->get_event_types( $user_uri, 100 );
+			if ( is_wp_error( $user_response ) ) {
+				$error_messages[] = 'User event types: ' . $user_response->get_error_message();
+			} else {
+				$user_collection = isset( $user_response['collection'] ) && is_array( $user_response['collection'] ) ? $user_response['collection'] : array();
+			}
 		}
 
-		$collection = isset( $response['collection'] ) && is_array( $response['collection'] ) ? $response['collection'] : array();
-		$event_types = array();
-		foreach ( $collection as $item ) {
-			$uri  = isset( $item['uri'] ) ? esc_url_raw( (string) $item['uri'] ) : '';
-			$name = isset( $item['name'] ) ? sanitize_text_field( (string) $item['name'] ) : $uri;
+		if ( ! empty( $organization_uri ) ) {
+			$org_response = $client->get_event_types_by_organization( $organization_uri, 100 );
+			if ( is_wp_error( $org_response ) ) {
+				$error_messages[] = 'Organization event types: ' . $org_response->get_error_message();
+			} else {
+				$org_collection = isset( $org_response['collection'] ) && is_array( $org_response['collection'] ) ? $org_response['collection'] : array();
+			}
+		}
+
+		$merged_by_uri = array();
+		foreach ( $user_collection as $item ) {
+			$uri = isset( $item['uri'] ) ? esc_url_raw( (string) $item['uri'] ) : '';
 			if ( '' === $uri ) {
 				continue;
 			}
+			$item['ctfb_source']   = 'user';
+			$merged_by_uri[ $uri ] = $item;
+		}
+
+		foreach ( $org_collection as $item ) {
+			$uri = isset( $item['uri'] ) ? esc_url_raw( (string) $item['uri'] ) : '';
+			if ( '' === $uri ) {
+				continue;
+			}
+			if ( ! isset( $merged_by_uri[ $uri ] ) ) {
+				$item['ctfb_source']   = 'organization';
+				$merged_by_uri[ $uri ] = $item;
+				continue;
+			}
+
+			$merged_by_uri[ $uri ]                = array_merge( $merged_by_uri[ $uri ], $item );
+			$merged_by_uri[ $uri ]['ctfb_source'] = 'user+organization';
+		}
+
+		$event_types = array();
+		foreach ( $merged_by_uri as $uri => $item ) {
+			$name = isset( $item['name'] ) ? sanitize_text_field( (string) $item['name'] ) : $uri;
+			$kind = $this->get_event_type_kind_label( $item );
 			$event_types[] = array(
-				'uri'  => $uri,
-				'name' => $name,
+				'uri'          => $uri,
+				'name'         => $name,
+				'label'        => $name . ' — ' . $kind,
+				'kind'         => $kind,
+				'pooling_type' => isset( $item['pooling_type'] ) ? sanitize_text_field( (string) $item['pooling_type'] ) : '',
+				'source'       => isset( $item['ctfb_source'] ) ? sanitize_text_field( (string) $item['ctfb_source'] ) : 'unknown',
 			);
+		}
+
+		usort(
+			$event_types,
+			function ( $a, $b ) {
+				return strcmp( (string) $a['name'], (string) $b['name'] );
+			}
+		);
+
+		$diagnostics = array(
+			'event_type_sources_used'               => trim( implode( ', ', array_filter( array( ! empty( $user_uri ) ? 'user' : '', ! empty( $organization_uri ) ? 'organization' : '' ) ) ), ', ' ),
+			'user_event_types_loaded_count'         => count( $user_collection ),
+			'organization_event_types_loaded_count' => count( $org_collection ),
+			'merged_unique_event_types_count'       => count( $event_types ),
+		);
+
+		$this->persist_shared_support_diagnostics( $diagnostics );
+
+		foreach ( $event_types as $event_type ) {
+			Logger::debug(
+				'event_type_loaded',
+				array(
+					'event_type_uri'  => $event_type['uri'],
+					'event_type_name' => $event_type['name'],
+					'pooling_type'    => $event_type['pooling_type'],
+					'event_source'    => $event_type['source'],
+				)
+			);
+		}
+
+		$error = implode( ' | ', $error_messages );
+
+		if ( empty( $event_types ) && '' === $error ) {
+			$error = 'No event types were returned by Calendly for the available scopes.';
 		}
 
 		return array(
 			'event_types' => $event_types,
-			'error'       => '',
+			'error'       => $error,
+			'diagnostics' => $diagnostics,
 		);
+	}
+
+
+	private function get_organization_uri( $options, $client ) {
+		$organization_uri = '';
+		$me               = $client->get_users_me();
+		if ( ! is_wp_error( $me ) && ! empty( $me['resource']['current_organization'] ) ) {
+			$organization_uri = esc_url_raw( (string) $me['resource']['current_organization'] );
+		}
+
+		if ( '' === $organization_uri && ! empty( $options['webhook_organization_uri'] ) ) {
+			$organization_uri = esc_url_raw( (string) $options['webhook_organization_uri'] );
+		}
+
+		return $organization_uri;
+	}
+
+	private function get_event_type_kind_label( $item ) {
+		$pooling_type = isset( $item['pooling_type'] ) ? strtolower( sanitize_text_field( (string) $item['pooling_type'] ) ) : '';
+		if ( 'round_robin' === $pooling_type ) {
+			return 'Round Robin';
+		}
+		if ( 'collective' === $pooling_type ) {
+			return 'Collective';
+		}
+
+		$kind = isset( $item['kind'] ) ? strtolower( sanitize_text_field( (string) $item['kind'] ) ) : '';
+		if ( false !== strpos( $kind, 'collective' ) ) {
+			return 'Collective';
+		}
+		if ( false !== strpos( $kind, 'group' ) ) {
+			return 'Group';
+		}
+
+		return 'One-on-One';
+	}
+
+	private function persist_shared_support_diagnostics( $shared_diagnostics ) {
+		$diag = get_option( 'ctfb_diagnostics', array() );
+		if ( ! is_array( $diag ) ) {
+			$diag = array();
+		}
+
+		$diag['event_type_sources_used']               = isset( $shared_diagnostics['event_type_sources_used'] ) ? $shared_diagnostics['event_type_sources_used'] : '';
+		$diag['organization_event_types_loaded_count'] = isset( $shared_diagnostics['organization_event_types_loaded_count'] ) ? (int) $shared_diagnostics['organization_event_types_loaded_count'] : 0;
+		$diag['user_event_types_loaded_count']         = isset( $shared_diagnostics['user_event_types_loaded_count'] ) ? (int) $shared_diagnostics['user_event_types_loaded_count'] : 0;
+		$diag['merged_unique_event_types_count']       = isset( $shared_diagnostics['merged_unique_event_types_count'] ) ? (int) $shared_diagnostics['merged_unique_event_types_count'] : 0;
+
+		update_option( 'ctfb_diagnostics', $diag );
 	}
 
 	private function download_log_file() {

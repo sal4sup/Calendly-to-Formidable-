@@ -68,7 +68,21 @@ class Formidable_Sync {
 			}
 
 			$scheduled_event_type_uri = $this->extract_scheduled_event_type_uri( $resource );
-			$allowed_event_types      = $this->get_allowed_event_types( $options );
+			$event_type_name           = $this->extract_scheduled_event_type_name( $resource );
+			$pooling_type              = $this->extract_pooling_type( $resource );
+			$shared_booking            = $this->is_shared_booking( $pooling_type, $resource );
+			$allowed_event_types       = $this->get_allowed_event_types( $options );
+
+			Logger::debug(
+				'webhook_event_type_detected',
+				array(
+					'event_type_uri'  => $scheduled_event_type_uri,
+					'event_type_name' => $event_type_name,
+					'pooling_type'    => $pooling_type,
+					'shared_booking'  => $shared_booking ? 'yes' : 'no',
+				)
+			);
+
 			if ( ! $this->is_event_type_allowed( $scheduled_event_type_uri, $allowed_event_types ) ) {
 				Logger::info(
 					'webhook_event_type_filter',
@@ -79,6 +93,16 @@ class Formidable_Sync {
 					)
 					,
 					true
+				);
+				Logger::debug(
+					'shared_team_booking_inclusion',
+					array(
+						'booking_status'  => 'skipped',
+						'shared_booking'  => $shared_booking ? 'yes' : 'no',
+						'event_type_uri'  => $scheduled_event_type_uri,
+						'event_type_name' => $event_type_name,
+						'pooling_type'    => $pooling_type,
+					)
 				);
 				return array( 'ok' => true, 'message' => 'Event type skipped by filter.' );
 			}
@@ -93,6 +117,25 @@ class Formidable_Sync {
 			Logger::debug( 'host_user_name', array( 'value' => $host_assignment['host_user_name'] ) );
 			Logger::debug( 'host_user_email', array( 'value' => $host_assignment['host_user_email'] ) );
 			Logger::debug( 'host_user_uri', array( 'value' => $host_assignment['host_user_uri'] ) );
+			Logger::debug(
+				'shared_team_booking_inclusion',
+				array(
+					'booking_status'  => 'included',
+					'shared_booking'  => $shared_booking ? 'yes' : 'no',
+					'event_type_uri'  => $scheduled_event_type_uri,
+					'event_type_name' => $event_type_name,
+					'pooling_type'    => $pooling_type,
+				)
+			);
+
+			Logger::debug(
+				'host_assignment_extracted',
+				array(
+					'host_user_uri'   => $host_assignment['host_user_uri'],
+					'host_user_email' => $host_assignment['host_user_email'],
+					'host_user_name'  => $host_assignment['host_user_name'],
+				)
+			);
 
 			if ( isset( $resource['tracking'] ) && ! is_array( $resource['tracking'] ) ) {
 				Logger::warning( 'tracking_unexpected_shape', array( 'value_type' => gettype( $resource['tracking'] ) ) );
@@ -224,6 +267,45 @@ class Formidable_Sync {
 		}
 
 		return '';
+	}
+
+	private function extract_scheduled_event_type_name( $resource ) {
+		if ( ! isset( $resource['scheduled_event'] ) || ! is_array( $resource['scheduled_event'] ) ) {
+			return '';
+		}
+
+		$scheduled_event = $resource['scheduled_event'];
+		if ( isset( $scheduled_event['name'] ) && is_string( $scheduled_event['name'] ) ) {
+			return sanitize_text_field( $scheduled_event['name'] );
+		}
+
+		return '';
+	}
+
+	private function extract_pooling_type( $resource ) {
+		if ( ! isset( $resource['scheduled_event'] ) || ! is_array( $resource['scheduled_event'] ) ) {
+			return '';
+		}
+
+		$scheduled_event = $resource['scheduled_event'];
+		if ( isset( $scheduled_event['pooling_type'] ) && is_string( $scheduled_event['pooling_type'] ) ) {
+			return sanitize_text_field( $scheduled_event['pooling_type'] );
+		}
+
+		return '';
+	}
+
+	private function is_shared_booking( $pooling_type, $resource ) {
+		$normalized_pooling = strtolower( (string) $pooling_type );
+		if ( in_array( $normalized_pooling, array( 'round_robin', 'collective' ), true ) ) {
+			return true;
+		}
+
+		if ( isset( $resource['scheduled_event']['event_memberships'] ) && is_array( $resource['scheduled_event']['event_memberships'] ) && count( $resource['scheduled_event']['event_memberships'] ) > 1 ) {
+			return true;
+		}
+
+		return false;
 	}
 
 	private function get_allowed_event_types( $options ) {
