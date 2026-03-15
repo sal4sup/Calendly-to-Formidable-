@@ -67,6 +67,33 @@ class Formidable_Sync {
 				Logger::warning( 'email_unexpected_shape', array( 'value_type' => gettype( $resource['email'] ) ) );
 			}
 
+			$scheduled_event_type_uri = $this->extract_scheduled_event_type_uri( $resource );
+			$allowed_event_types      = $this->get_allowed_event_types( $options );
+			if ( ! $this->is_event_type_allowed( $scheduled_event_type_uri, $allowed_event_types ) ) {
+				Logger::info(
+					'webhook_event_type_filter',
+					array(
+						'detected_event_type_uri' => $scheduled_event_type_uri,
+						'allowed_event_type_uris' => $allowed_event_types,
+						'filter_result'           => 'skipped',
+					)
+					,
+					true
+				);
+				return array( 'ok' => true, 'message' => 'Event type skipped by filter.' );
+			}
+
+			$host_assignment = $this->extract_host_assignment( $resource );
+			Logger::debug(
+				'host_assignment_detected',
+				array(
+					'value' => ! empty( $host_assignment['host_user_uri'] ) ? 'yes' : 'no',
+				)
+			);
+			Logger::debug( 'host_user_name', array( 'value' => $host_assignment['host_user_name'] ) );
+			Logger::debug( 'host_user_email', array( 'value' => $host_assignment['host_user_email'] ) );
+			Logger::debug( 'host_user_uri', array( 'value' => $host_assignment['host_user_uri'] ) );
+
 			if ( isset( $resource['tracking'] ) && ! is_array( $resource['tracking'] ) ) {
 				Logger::warning( 'tracking_unexpected_shape', array( 'value_type' => gettype( $resource['tracking'] ) ) );
 			}
@@ -118,6 +145,7 @@ class Formidable_Sync {
 			}
 
 			$diagnostics = isset( $mapped['diagnostics'] ) && is_array( $mapped['diagnostics'] ) ? $mapped['diagnostics'] : array();
+			$diagnostics['host_assignment'] = $host_assignment;
 			Logger::debug(
 				'final_item_meta_payload_prepared',
 				array(
@@ -176,6 +204,91 @@ class Formidable_Sync {
 			$this->log_throwable( $e, $payload );
 			return array( 'ok' => false, 'message' => 'Webhook processing failed due to runtime error.' );
 		}
+	}
+
+	private function extract_scheduled_event_type_uri( $resource ) {
+		if ( ! isset( $resource['scheduled_event'] ) || ! is_array( $resource['scheduled_event'] ) ) {
+			if ( isset( $resource['scheduled_event'] ) && ! is_array( $resource['scheduled_event'] ) ) {
+				Logger::warning( 'scheduled_event_for_event_type_unexpected_shape', array( 'value_type' => gettype( $resource['scheduled_event'] ) ) );
+			}
+			return '';
+		}
+
+		$scheduled_event = $resource['scheduled_event'];
+		if ( isset( $scheduled_event['event_type'] ) && is_string( $scheduled_event['event_type'] ) ) {
+			return esc_url_raw( $scheduled_event['event_type'] );
+		}
+
+		if ( isset( $scheduled_event['event_type'] ) && ! is_string( $scheduled_event['event_type'] ) ) {
+			Logger::warning( 'scheduled_event_event_type_unexpected_shape', array( 'value_type' => gettype( $scheduled_event['event_type'] ) ) );
+		}
+
+		return '';
+	}
+
+	private function get_allowed_event_types( $options ) {
+		if ( empty( $options['allowed_event_types'] ) || ! is_array( $options['allowed_event_types'] ) ) {
+			return array();
+		}
+
+		$allowed = array();
+		foreach ( $options['allowed_event_types'] as $uri ) {
+			$clean = esc_url_raw( trim( (string) $uri ) );
+			if ( '' !== $clean ) {
+				$allowed[] = $clean;
+			}
+		}
+
+		return array_values( array_unique( $allowed ) );
+	}
+
+	private function is_event_type_allowed( $event_type_uri, $allowed_event_types ) {
+		if ( empty( $allowed_event_types ) ) {
+			return true;
+		}
+
+		if ( empty( $event_type_uri ) ) {
+			return false;
+		}
+
+		return in_array( $event_type_uri, $allowed_event_types, true );
+	}
+
+	private function extract_host_assignment( $resource ) {
+		$host = array(
+			'host_user_uri'   => '',
+			'host_user_email' => '',
+			'host_user_name'  => '',
+		);
+
+		if ( ! isset( $resource['scheduled_event'] ) || ! is_array( $resource['scheduled_event'] ) ) {
+			return $host;
+		}
+
+		$scheduled_event = $resource['scheduled_event'];
+		if ( ! isset( $scheduled_event['event_memberships'] ) || ! is_array( $scheduled_event['event_memberships'] ) ) {
+			if ( isset( $scheduled_event['event_memberships'] ) ) {
+				Logger::warning( 'event_memberships_unexpected_shape', array( 'value_type' => gettype( $scheduled_event['event_memberships'] ) ) );
+			}
+			return $host;
+		}
+
+		$first_membership = isset( $scheduled_event['event_memberships'][0] ) && is_array( $scheduled_event['event_memberships'][0] ) ? $scheduled_event['event_memberships'][0] : array();
+		if ( empty( $first_membership ) ) {
+			return $host;
+		}
+
+		if ( isset( $first_membership['user'] ) && is_string( $first_membership['user'] ) ) {
+			$host['host_user_uri'] = esc_url_raw( $first_membership['user'] );
+		}
+		if ( isset( $first_membership['user_email'] ) && is_string( $first_membership['user_email'] ) ) {
+			$host['host_user_email'] = sanitize_email( $first_membership['user_email'] );
+		}
+		if ( isset( $first_membership['user_name'] ) && is_string( $first_membership['user_name'] ) ) {
+			$host['host_user_name'] = sanitize_text_field( $first_membership['user_name'] );
+		}
+
+		return $host;
 	}
 
 	private function handle_cancel( $invitee_uri, $hash, $email ) {

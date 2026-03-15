@@ -27,15 +27,40 @@ class Field_Mapper {
 				$labels[] = sanitize_text_field( $item['question'] );
 			}
 		}
+		Logger::debug( 'questions_and_answers_count', array( 'value' => count( $qa ) ) );
+		Logger::debug( 'detected_question_labels', array( 'labels' => $labels ) );
 		Logger::debug( 'detected_custom_question_labels', array( 'labels' => implode( '|', $labels ) ) );
 
-		$company               = $this->extract_answer( $qa, array( 'company', 'company name', 'business', 'business name', 'organization', 'organization name', 'employer', 'employer name' ) );
+		$freight_question_needles = array(
+			'are you a freight forwarder',
+			'freight forwarder',
+			'forwarder',
+			'logistics company',
+		);
+		$company_question_needles = array(
+			"what's your company name",
+			'whats your company name',
+			'what is your company name',
+			'your company name',
+			'company name',
+			'business name',
+			'organization name',
+			'employer name',
+			'company',
+			'business',
+			'organization',
+			'employer',
+		);
+
+		$company               = $this->extract_answer( $qa, $company_question_needles );
 		$company_fallback_used = false;
+		Logger::debug( 'extracted_company_name_answer', array( 'value' => $company ) );
 		if ( empty( $company ) ) {
 			$company               = ! empty( $settings['fallback_company_name'] ) ? sanitize_text_field( $settings['fallback_company_name'] ) : 'Not Provided';
 			$company_fallback_used = true;
 			Logger::debug( 'fallback_values_applied', array( 'company' => $company ) );
 		}
+		Logger::debug( 'fallback_used_for_company_name', array( 'value' => $company_fallback_used ? 'yes' : 'no' ) );
 		Logger::debug( 'company_name_field_24_resolved', array( 'extracted_value' => $company, 'fallback_used' => $company_fallback_used ? 'yes' : 'no', 'final_value' => $company ) );
 
 		$phone = isset( $resource['text_reminder_number'] ) ? sanitize_text_field( $resource['text_reminder_number'] ) : '';
@@ -49,7 +74,8 @@ class Field_Mapper {
 			Logger::debug( 'fallback_values_applied', array( 'country' => $country ) );
 		}
 
-		$forwarder_source_value  = $this->extract_answer( $qa, array( 'are you a freight forwarder', 'freight forwarder', 'forwarder', 'logistics company' ) );
+		$forwarder_source_value  = $this->extract_answer( $qa, $freight_question_needles );
+		Logger::debug( 'extracted_freight_forwarder_answer', array( 'value' => $forwarder_source_value ) );
 		$forwarder               = $this->normalize_yes_no( $forwarder_source_value );
 		$forwarder_fallback_used = false;
 		if ( empty( $forwarder ) ) {
@@ -57,6 +83,7 @@ class Field_Mapper {
 			$forwarder_fallback_used = true;
 			Logger::debug( 'fallback_values_applied', array( 'freight_forwarder' => $forwarder ) );
 		}
+		Logger::debug( 'fallback_used_for_freight_forwarder', array( 'value' => $forwarder_fallback_used ? 'yes' : 'no' ) );
 		Logger::debug( 'freight_forwarder_field_73_resolved', array( 'source_value' => $forwarder_source_value, 'normalized_value' => $forwarder, 'fallback_used' => $forwarder_fallback_used ? 'yes' : 'no' ) );
 
 		$terms_info = $this->get_terms_value();
@@ -106,19 +133,32 @@ class Field_Mapper {
 	}
 
 	private function extract_answer( $qa, $needles ) {
+		$normalized_needles = array();
+		foreach ( (array) $needles as $needle ) {
+			$normalized_needles[] = $this->normalize_question_label( $needle );
+		}
+
 		foreach ( $qa as $item ) {
-			$question = isset( $item['question'] ) ? $this->norm( $item['question'] ) : '';
+			$question = isset( $item['question'] ) ? $this->normalize_question_label( $item['question'] ) : '';
 			$answer   = isset( $item['answer'] ) ? trim( wp_strip_all_tags( (string) $item['answer'] ) ) : '';
 			if ( empty( $question ) || '' === $answer ) {
 				continue;
 			}
-			foreach ( $needles as $needle ) {
-				if ( false !== strpos( $question, $this->norm( $needle ) ) ) {
+			foreach ( $normalized_needles as $needle ) {
+				if ( '' !== $needle && false !== strpos( $question, $needle ) ) {
 					return sanitize_text_field( $answer );
 				}
 			}
 		}
 		return '';
+	}
+
+	private function normalize_question_label( $text ) {
+		$text = $this->norm( $text );
+		$text = str_replace( array( "'", '"' ), '', $text );
+		$text = preg_replace( '/[^a-z0-9\s]/', ' ', $text );
+		$text = preg_replace( '/\s+/', ' ', trim( (string) $text ) );
+		return $text;
 	}
 
 	private function norm( $text ) {

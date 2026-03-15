@@ -36,7 +36,39 @@ class Settings_Page {
 		$sanitized['webhook_scope_uri']          = isset( $existing['webhook_scope_uri'] ) ? $existing['webhook_scope_uri'] : '';
 		$sanitized['webhook_user_uri']           = isset( $existing['webhook_user_uri'] ) ? $existing['webhook_user_uri'] : '';
 		$sanitized['webhook_organization_uri']   = isset( $existing['webhook_organization_uri'] ) ? $existing['webhook_organization_uri'] : '';
+		$sanitized['allowed_event_types']        = $this->sanitize_allowed_event_types( $input, $existing );
 		return $sanitized;
+	}
+
+	private function sanitize_allowed_event_types( $input, $existing ) {
+		$allowed = array();
+
+		if ( isset( $input['allowed_event_types'] ) && is_array( $input['allowed_event_types'] ) ) {
+			foreach ( $input['allowed_event_types'] as $uri ) {
+				$clean = esc_url_raw( trim( (string) $uri ) );
+				if ( '' !== $clean ) {
+					$allowed[] = $clean;
+				}
+			}
+		}
+
+		if ( isset( $input['allowed_event_types_manual'] ) ) {
+			$manual_lines = preg_split( '/\r\n|\r|\n/', (string) $input['allowed_event_types_manual'] );
+			if ( is_array( $manual_lines ) ) {
+				foreach ( $manual_lines as $line ) {
+					$clean = esc_url_raw( trim( (string) $line ) );
+					if ( '' !== $clean ) {
+						$allowed[] = $clean;
+					}
+				}
+			}
+		}
+
+		if ( empty( $allowed ) && isset( $existing['allowed_event_types'] ) && is_array( $existing['allowed_event_types'] ) && ! isset( $input['allowed_event_types'] ) && ! isset( $input['allowed_event_types_manual'] ) ) {
+			$allowed = $existing['allowed_event_types'];
+		}
+
+		return array_values( array_unique( $allowed ) );
 	}
 
 	public function activation_notice() {
@@ -379,6 +411,10 @@ class Settings_Page {
 	public function render_page() {
 		$options      = get_option( 'ctfb_options', array() );
 		$diagnostics  = get_option( 'ctfb_diagnostics', array() );
+		$allowed_event_type_uris = $this->get_allowed_event_types_from_options( $options );
+		$event_type_response     = $this->get_available_event_types( $options );
+		$event_type_options      = isset( $event_type_response['event_types'] ) && is_array( $event_type_response['event_types'] ) ? $event_type_response['event_types'] : array();
+		$event_type_error        = isset( $event_type_response['error'] ) ? $event_type_response['error'] : '';
 		$bookings     = $this->get_recent_bookings( $options );
 		$debug_mode   = ! empty( $options['debug_logging'] );
 		$log_path     = Logger::get_log_file_path();
@@ -406,6 +442,26 @@ class Settings_Page {
 					<tr><th>Fallback Company Name</th><td><input type="text" name="ctfb_options[fallback_company_name]" value="<?php echo esc_attr( isset( $options['fallback_company_name'] ) ? $options['fallback_company_name'] : '' ); ?>" class="regular-text" /></td></tr>
 					<tr><th>Fallback Freight Forwarder</th><td><select name="ctfb_options[fallback_freight_forwarder]"><option value="No" <?php selected( isset( $options['fallback_freight_forwarder'] ) ? $options['fallback_freight_forwarder'] : 'No', 'No' ); ?>>No</option><option value="Yes" <?php selected( isset( $options['fallback_freight_forwarder'] ) ? $options['fallback_freight_forwarder'] : 'No', 'Yes' ); ?>>Yes</option></select></td></tr>
 					<tr><th>Default Country</th><td><input type="text" name="ctfb_options[default_country]" value="<?php echo esc_attr( isset( $options['default_country'] ) ? $options['default_country'] : '' ); ?>" class="regular-text" /></td></tr>
+					<tr>
+						<th>Allowed Event Types</th>
+						<td>
+							<?php if ( empty( $event_type_error ) && ! empty( $event_type_options ) ) : ?>
+								<select name="ctfb_options[allowed_event_types][]" multiple="multiple" style="min-width: 420px; min-height: 140px;">
+									<?php foreach ( $event_type_options as $event_type_option ) : ?>
+										<?php $uri = isset( $event_type_option['uri'] ) ? $event_type_option['uri'] : ''; ?>
+										<?php $label = isset( $event_type_option['name'] ) ? $event_type_option['name'] : $uri; ?>
+										<option value="<?php echo esc_attr( $uri ); ?>" <?php selected( in_array( $uri, $allowed_event_type_uris, true ) ); ?>><?php echo esc_html( $label ); ?></option>
+									<?php endforeach; ?>
+								</select>
+								<p class="description">Leave empty to allow all event types.</p>
+							<?php else : ?>
+								<p><strong>Could not load event types from Calendly API.</strong></p>
+								<p><?php echo esc_html( $event_type_error ); ?></p>
+								<textarea name="ctfb_options[allowed_event_types_manual]" rows="6" style="min-width: 420px;"><?php echo esc_textarea( implode( "\n", $allowed_event_type_uris ) ); ?></textarea>
+								<p class="description">Enter one event type URI per line. Leave empty to allow all event types.</p>
+							<?php endif; ?>
+						</td>
+					</tr>
 					<tr><th>Webhook endpoint URL</th><td><code><?php echo esc_html( rest_url( 'ctfb/v1/webhook' ) ); ?></code></td></tr>
 				</table>
 				<?php submit_button( 'Save Settings' ); ?>
@@ -438,6 +494,8 @@ class Settings_Page {
 				<tr><td>Connection status</td><td><?php echo esc_html( isset( $diagnostics['connection_status'] ) ? $diagnostics['connection_status'] : '' ); ?></td></tr>
 				<tr><td>Last API check time</td><td><?php echo esc_html( isset( $diagnostics['last_api_check'] ) ? $diagnostics['last_api_check'] : '' ); ?></td></tr>
 				<tr><td>Last API error</td><td><?php echo esc_html( isset( $diagnostics['last_api_error'] ) ? $diagnostics['last_api_error'] : '' ); ?></td></tr>
+				<tr><td>Allowed event types count</td><td><?php echo esc_html( count( $allowed_event_type_uris ) ); ?></td></tr>
+				<tr><td>Allowed event type URIs</td><td><?php echo esc_html( implode( ', ', $allowed_event_type_uris ) ); ?></td></tr>
 				<tr><td>Last successful sync time</td><td><?php echo esc_html( get_option( 'ctfb_last_successful_sync', '' ) ); ?></td></tr>
 				<tr><td>Last processed email</td><td><?php echo esc_html( get_option( 'ctfb_last_processed_email', '' ) ); ?></td></tr>
 				<tr><td>Last error</td><td><?php echo esc_html( get_option( 'ctfb_last_error', '' ) ); ?></td></tr>
@@ -515,6 +573,8 @@ class Settings_Page {
 	}
 
 	private function get_recent_bookings( $options ) {
+		$allowed_event_types = $this->get_allowed_event_types_from_options( $options );
+
 		if ( empty( $options['pat'] ) ) {
 			return array();
 		}
@@ -530,6 +590,21 @@ class Settings_Page {
 
 		$rows = array();
 		foreach ( $events['collection'] as $event ) {
+			$event_type_uri = isset( $event['event_type'] ) ? esc_url_raw( (string) $event['event_type'] ) : '';
+			Logger::debug( 'recent_booking_event_type_detected', array( 'event_type_uri' => $event_type_uri ) );
+
+			if ( ! empty( $allowed_event_types ) ) {
+				if ( empty( $event_type_uri ) ) {
+					Logger::debug( 'recent_booking_filter_excluded', array( 'reason' => 'missing_event_type', 'event_name' => isset( $event['name'] ) ? $event['name'] : '' ) );
+					continue;
+				}
+				if ( ! in_array( $event_type_uri, $allowed_event_types, true ) ) {
+					Logger::debug( 'recent_booking_filter_excluded', array( 'reason' => 'not_allowed_event_type', 'event_type_uri' => $event_type_uri ) );
+					continue;
+				}
+			}
+
+			Logger::debug( 'recent_booking_filter_included', array( 'event_type_uri' => $event_type_uri ) );
 			$inv     = $client->get_event_invitees( isset( $event['uri'] ) ? $event['uri'] : '', 1 );
 			$invitee = ( ! is_wp_error( $inv ) && ! empty( $inv['collection'][0] ) ) ? $inv['collection'][0] : array();
 			$rows[]  = array(
@@ -541,6 +616,67 @@ class Settings_Page {
 			);
 		}
 		return $rows;
+	}
+
+	private function get_allowed_event_types_from_options( $options ) {
+		$allowed = array();
+		if ( empty( $options['allowed_event_types'] ) || ! is_array( $options['allowed_event_types'] ) ) {
+			return $allowed;
+		}
+
+		foreach ( $options['allowed_event_types'] as $uri ) {
+			$clean = esc_url_raw( trim( (string) $uri ) );
+			if ( '' !== $clean ) {
+				$allowed[] = $clean;
+			}
+		}
+
+		return array_values( array_unique( $allowed ) );
+	}
+
+	private function get_available_event_types( $options ) {
+		if ( empty( $options['pat'] ) ) {
+			return array(
+				'event_types' => array(),
+				'error'       => 'Personal Access Token is required to load event types.',
+			);
+		}
+
+		$user_uri = Token_Helper::get_user_uri_from_pat( $options['pat'] );
+		if ( empty( $user_uri ) ) {
+			return array(
+				'event_types' => array(),
+				'error'       => 'Could not determine user URI from Personal Access Token.',
+			);
+		}
+
+		$client   = new Calendly_Client( $options['pat'] );
+		$response = $client->get_event_types( $user_uri, 100 );
+		if ( is_wp_error( $response ) ) {
+			return array(
+				'event_types' => array(),
+				'error'       => $response->get_error_message(),
+			);
+		}
+
+		$collection = isset( $response['collection'] ) && is_array( $response['collection'] ) ? $response['collection'] : array();
+		$event_types = array();
+		foreach ( $collection as $item ) {
+			$uri  = isset( $item['uri'] ) ? esc_url_raw( (string) $item['uri'] ) : '';
+			$name = isset( $item['name'] ) ? sanitize_text_field( (string) $item['name'] ) : $uri;
+			if ( '' === $uri ) {
+				continue;
+			}
+			$event_types[] = array(
+				'uri'  => $uri,
+				'name' => $name,
+			);
+		}
+
+		return array(
+			'event_types' => $event_types,
+			'error'       => '',
+		);
 	}
 
 	private function download_log_file() {

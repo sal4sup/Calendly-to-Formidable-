@@ -48,6 +48,11 @@ class Calendly_Client {
 		return $this->request( 'GET', $path );
 	}
 
+	public function get_event_types( $user_uri, $count = 100 ) {
+		$path = '/event_types?user=' . rawurlencode( $user_uri ) . '&count=' . absint( $count ) . '&sort=name:asc';
+		return $this->request( 'GET', $path );
+	}
+
 	public function get_event_invitees( $event_uri, $count = 1 ) {
 		$path = '/scheduled_events/' . basename( untrailingslashit( $event_uri ) ) . '/invitees?count=' . absint( $count );
 		return $this->request( 'GET', $path );
