@@ -13,6 +13,7 @@ class Formidable_Sync {
 
 	public function process( $payload, $commit = true, $source = 'unknown' ) {
 		$options = get_option( 'ctfb_options', array() );
+		$scope_mode_used = isset( $options['webhook_scope_mode'] ) ? sanitize_text_field( (string) $options['webhook_scope_mode'] ) : ( isset( $options['webhook_scope'] ) ? sanitize_text_field( (string) $options['webhook_scope'] ) : 'user' );
 		Logger::debug( 'validation_started', array( 'source' => $source, 'commit' => $commit ? 'yes' : 'no' ) );
 		if ( ! empty( $source ) && false !== strpos( $source, 'manual' ) ) {
 			Logger::info( 'manual_test_flow', array( 'commit_to_database' => $commit ? 'yes' : 'no' ) );
@@ -69,6 +70,8 @@ class Formidable_Sync {
 
 			$scheduled_event_type_uri = $this->extract_scheduled_event_type_uri( $resource );
 			$event_type_name           = $this->extract_scheduled_event_type_name( $resource );
+			$webhook_event_uri         = $scheduled_event_uri;
+			$webhook_event_name        = $event_type_name;
 			$pooling_type              = $this->extract_pooling_type( $resource );
 			$shared_booking            = $this->is_shared_booking( $pooling_type, $resource );
 			$allowed_event_types       = $this->get_allowed_event_types( $options );
@@ -78,8 +81,11 @@ class Formidable_Sync {
 				array(
 					'event_type_uri'  => $scheduled_event_type_uri,
 					'event_type_name' => $event_type_name,
+					'event_uri'       => $webhook_event_uri,
+					'event_name'      => $webhook_event_name,
 					'pooling_type'    => $pooling_type,
 					'shared_booking'  => $shared_booking ? 'yes' : 'no',
+					'webhook_scope_mode_used' => $scope_mode_used,
 				)
 			);
 
@@ -106,6 +112,14 @@ class Formidable_Sync {
 				);
 				return array( 'ok' => true, 'message' => 'Event type skipped by filter.' );
 			}
+
+
+			$diag = get_option( 'ctfb_diagnostics', array() );
+			if ( ! is_array( $diag ) ) {
+				$diag = array();
+			}
+			$diag['organization_shared_team_support_enabled'] = in_array( $scope_mode_used, array( 'organization', 'both' ), true ) ? 'yes' : 'no';
+			update_option( 'ctfb_diagnostics', $diag );
 
 			$host_assignment = $this->extract_host_assignment( $resource );
 			Logger::debug(

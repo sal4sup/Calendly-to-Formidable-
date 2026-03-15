@@ -101,6 +101,30 @@ class Webhook_Controller {
 		$payload    = ( isset( $data['payload'] ) && is_array( $data['payload'] ) ) ? $data['payload'] : array();
 		$event_type = isset( $data['event'] ) ? sanitize_text_field( $data['event'] ) : '';
 		$email      = isset( $payload['email'] ) ? sanitize_email( $payload['email'] ) : '';
+		$scheduled_event = isset( $payload['scheduled_event'] ) && is_array( $payload['scheduled_event'] ) ? $payload['scheduled_event'] : array();
+		$webhook_event_uri = isset( $scheduled_event['uri'] ) ? esc_url_raw( (string) $scheduled_event['uri'] ) : '';
+		$webhook_event_name = isset( $scheduled_event['name'] ) ? sanitize_text_field( (string) $scheduled_event['name'] ) : '';
+		$webhook_event_type_uri = isset( $scheduled_event['event_type'] ) ? esc_url_raw( (string) $scheduled_event['event_type'] ) : '';
+		$host_assignment = isset( $payload['assigned_to'] ) ? $payload['assigned_to'] : '';
+		$scope_mode_used = isset( $options['webhook_scope_mode'] ) ? sanitize_text_field( (string) $options['webhook_scope_mode'] ) : ( isset( $options['webhook_scope'] ) ? sanitize_text_field( (string) $options['webhook_scope'] ) : 'user' );
+		Logger::info( 'incoming_webhook_event_metadata', array(
+			'webhook_event_name' => $webhook_event_name,
+			'webhook_event_uri' => $webhook_event_uri,
+			'webhook_event_type_uri' => $webhook_event_type_uri,
+			'webhook_scope_mode_used' => $scope_mode_used,
+			'host_assignment' => is_array( $host_assignment ) ? wp_json_encode( $host_assignment ) : sanitize_text_field( (string) $host_assignment ),
+		), true );
+
+
+		$pooling_type = isset( $scheduled_event['pooling_type'] ) ? strtolower( sanitize_text_field( (string) $scheduled_event['pooling_type'] ) ) : '';
+		if ( in_array( $pooling_type, array( 'round_robin', 'collective' ), true ) ) {
+			$diag = get_option( 'ctfb_diagnostics', array() );
+			if ( ! is_array( $diag ) ) {
+				$diag = array();
+			}
+			$diag['last_shared_team_webhook_received_time'] = current_time( 'mysql' );
+			update_option( 'ctfb_diagnostics', $diag );
+		}
 
 		if ( ! $sync_enabled ) {
 			Logger::warning( 'webhook_processing_stopped', array( 'reason' => 'sync_disabled' ) );
@@ -117,6 +141,14 @@ class Webhook_Controller {
 				return new \WP_REST_Response( array( 'message' => $result['message'] ), 422 );
 			}
 
+			if ( in_array( $pooling_type, array( 'round_robin', 'collective' ), true ) ) {
+				$diag = get_option( 'ctfb_diagnostics', array() );
+				if ( ! is_array( $diag ) ) {
+					$diag = array();
+				}
+				$diag['last_shared_team_webhook_processed_time'] = current_time( 'mysql' );
+				update_option( 'ctfb_diagnostics', $diag );
+			}
 			Logger::info( 'formidable_create_completed', array( 'entry_id' => isset( $result['entry_id'] ) ? $result['entry_id'] : 0 ), true );
 			return new \WP_REST_Response( array( 'message' => $result['message'] ), 200 );
 		} catch ( \Throwable $e ) {

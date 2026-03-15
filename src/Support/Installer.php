@@ -16,6 +16,11 @@ class Installer {
 			'webhook_scope_uri'         => '',
 			'webhook_user_uri'          => '',
 			'webhook_organization_uri'  => '',
+			'webhook_scope_mode'        => 'user',
+			'webhook_user_active'       => 0,
+			'webhook_organization_active' => 0,
+			'webhook_user_subscription_uri' => '',
+			'webhook_organization_subscription_uri' => '',
 		);
 	}
 

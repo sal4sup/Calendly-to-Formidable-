@@ -36,6 +36,11 @@ class Settings_Page {
 		$sanitized['webhook_scope_uri']          = isset( $existing['webhook_scope_uri'] ) ? $existing['webhook_scope_uri'] : '';
 		$sanitized['webhook_user_uri']           = isset( $existing['webhook_user_uri'] ) ? $existing['webhook_user_uri'] : '';
 		$sanitized['webhook_organization_uri']   = isset( $existing['webhook_organization_uri'] ) ? $existing['webhook_organization_uri'] : '';
+		$sanitized['webhook_scope_mode']         = isset( $existing['webhook_scope_mode'] ) ? $existing['webhook_scope_mode'] : 'user';
+		$sanitized['webhook_user_active']        = isset( $existing['webhook_user_active'] ) ? (int) $existing['webhook_user_active'] : 0;
+		$sanitized['webhook_organization_active']= isset( $existing['webhook_organization_active'] ) ? (int) $existing['webhook_organization_active'] : 0;
+		$sanitized['webhook_user_subscription_uri'] = isset( $existing['webhook_user_subscription_uri'] ) ? $existing['webhook_user_subscription_uri'] : '';
+		$sanitized['webhook_organization_subscription_uri'] = isset( $existing['webhook_organization_subscription_uri'] ) ? $existing['webhook_organization_subscription_uri'] : '';
 		$sanitized['allowed_event_types']        = $this->sanitize_allowed_event_types( $input, $existing );
 
 		$sanitized = $this->preserve_existing_webhook_state( $sanitized, $existing );
@@ -49,6 +54,11 @@ class Settings_Page {
 			'webhook_scope_uri',
 			'webhook_user_uri',
 			'webhook_organization_uri',
+			'webhook_scope_mode',
+			'webhook_user_active',
+			'webhook_organization_active',
+			'webhook_user_subscription_uri',
+			'webhook_organization_subscription_uri',
 		);
 
 		foreach ( $keys as $key ) {
@@ -219,7 +229,7 @@ class Settings_Page {
 			$this->redirect_with_notice( $context['error'], true );
 		}
 
-		$payload = $this->build_webhook_payload( $context['user_uri'], $context['organization_uri'] );
+		$payload = $this->build_webhook_payload( $context['scope_mode'], $context['user_uri'], $context['organization_uri'] );
 		Logger::info( 'preview_final_webhook_payload_generated', array( 'payload' => $payload ), true );
 		update_option( 'ctfb_preview_create_webhook_payload', $payload );
 		$this->redirect_with_notice( 'Webhook payload preview generated. See Diagnostics section.', false );
@@ -296,22 +306,33 @@ class Settings_Page {
 			return array( 'is_error' => true, 'message' => $context['error'] );
 		}
 
-		$client  = new Calendly_Client( $context['token'] );
-		$payload = $this->build_webhook_payload( $context['user_uri'], $context['organization_uri'] );
-
-		if ( $refresh && ! empty( $options['webhook_subscription_uri'] ) ) {
-			$delete_trace = array();
-			$client->delete_webhook( $options['webhook_subscription_uri'], $delete_trace );
+		$client      = new Calendly_Client( $context['token'] );
+		$scope_mode  = $context['scope_mode'];
+		$scope_order = array();
+		if ( 'both' === $scope_mode ) {
+			$scope_order = array( 'user', 'organization' );
+		} elseif ( in_array( $scope_mode, array( 'user', 'organization' ), true ) ) {
+			$scope_order = array( $scope_mode );
 		}
 
-		Logger::info( 'create_webhook_api_call_started', array(), true );
-		Logger::info( 'create_webhook_request_payload_prepared', array( 'payload' => $payload ), true );
+		if ( empty( $scope_order ) ) {
+			return array( 'is_error' => true, 'message' => 'Could not determine webhook scope mode.' );
+		}
 
-		$trace    = array();
-		$response = $client->create_webhook( $payload['url'], 'organization', $context['user_uri'], $context['organization_uri'], $trace );
-		Logger::info(
-			'create_webhook_api_response_received',
-			array(
+		if ( $refresh ) {
+			$this->delete_known_webhooks_for_scopes( $client, $options, $scope_order );
+		}
+
+		$created_resources = array();
+		foreach ( $scope_order as $scope ) {
+			$payload = $this->build_webhook_payload( $scope, $context['user_uri'], $context['organization_uri'] );
+			Logger::info( 'create_webhook_api_call_started', array( 'scope' => $scope ), true );
+			Logger::info( 'create_webhook_request_payload_prepared', array( 'payload' => $payload ), true );
+
+			$trace = array();
+			$response = $client->create_webhook( $payload['url'], $scope, $context['user_uri'], $context['organization_uri'], $trace );
+			Logger::info( 'create_webhook_api_response_received', array(
+				'scope'             => $scope,
 				'request_url'       => isset( $trace['request_url'] ) ? $trace['request_url'] : '',
 				'request_method'    => isset( $trace['request_method'] ) ? $trace['request_method'] : 'POST',
 				'auth_header'       => isset( $trace['has_auth_header'] ) ? $trace['has_auth_header'] : 'yes',
@@ -319,157 +340,110 @@ class Settings_Page {
 				'http_status_code'  => isset( $trace['http_status'] ) ? $trace['http_status'] : 0,
 				'response_body'     => isset( $trace['response_body'] ) ? $trace['response_body'] : '',
 				'parsed_result'     => isset( $trace['parsed_response'] ) ? $trace['parsed_response'] : '',
-			),
-			true
-		);
+			), true );
 
-		if ( is_wp_error( $response ) ) {
-			$http_status = isset( $trace['http_status'] ) ? (string) $trace['http_status'] : '0';
-			$parsed_body = isset( $trace['parsed_response'] ) ? $trace['parsed_response'] : array();
-			$error_msg   = $response->get_error_message();
-			Logger::error( 'create_webhook_api_failed', array( 'http_status' => $http_status, 'parsed_response' => $parsed_body, 'error_message' => $error_msg ) );
-			$this->update_trace( 'last_create_webhook_api_status', $http_status );
-			$this->update_trace( 'last_create_webhook_api_error', $error_msg );
-			$this->update_webhook_diagnostics( 'failed', $error_msg );
-			return array( 'is_error' => true, 'message' => 'Webhook creation failed: ' . $error_msg );
+			if ( is_wp_error( $response ) ) {
+				$error_msg = $response->get_error_message();
+				$this->update_webhook_diagnostics( 'failed', $error_msg );
+				return array( 'is_error' => true, 'message' => 'Webhook creation failed: ' . $error_msg );
+			}
+
+			$created_resources[ $scope ] = isset( $response['resource'] ) && is_array( $response['resource'] ) ? $response['resource'] : array();
 		}
 
-		$resource        = isset( $response['resource'] ) ? $response['resource'] : array();
-		$webhook_state   = $this->extract_webhook_state_from_creation_response( $resource, $context );
-		$saved_id_or_uri = $webhook_state['webhook_subscription_uri'];
-
-		Logger::debug( 'webhook_settings_persist_started' );
-		Logger::debug( 'webhook_settings_persist_values_before_update_option', $webhook_state );
-		$persisted = $this->persist_webhook_state( $webhook_state );
-		Logger::debug(
-			'webhook_settings_persist_completed',
-			array(
-				'saved_webhook_subscription_uri' => isset( $persisted['webhook_subscription_uri'] ) ? $persisted['webhook_subscription_uri'] : '',
-				'saved_webhook_scope'            => isset( $persisted['webhook_scope'] ) ? $persisted['webhook_scope'] : '',
-				'saved_webhook_scope_uri'        => isset( $persisted['webhook_scope_uri'] ) ? $persisted['webhook_scope_uri'] : '',
-				'saved_webhook_user_uri'         => isset( $persisted['webhook_user_uri'] ) ? $persisted['webhook_user_uri'] : '',
-				'saved_webhook_organization_uri' => isset( $persisted['webhook_organization_uri'] ) ? $persisted['webhook_organization_uri'] : '',
-			)
-		);
-		Logger::debug( 'saved_webhook_subscription_uri', array( 'value' => isset( $persisted['webhook_subscription_uri'] ) ? $persisted['webhook_subscription_uri'] : '' ) );
-		Logger::debug( 'saved_webhook_scope', array( 'value' => isset( $persisted['webhook_scope'] ) ? $persisted['webhook_scope'] : '' ) );
-		Logger::debug( 'saved_webhook_scope_uri', array( 'value' => isset( $persisted['webhook_scope_uri'] ) ? $persisted['webhook_scope_uri'] : '' ) );
-		Logger::debug( 'saved_webhook_user_uri', array( 'value' => isset( $persisted['webhook_user_uri'] ) ? $persisted['webhook_user_uri'] : '' ) );
-		Logger::debug( 'saved_webhook_organization_uri', array( 'value' => isset( $persisted['webhook_organization_uri'] ) ? $persisted['webhook_organization_uri'] : '' ) );
-
-		$this->update_trace( 'last_create_webhook_api_status', isset( $trace['http_status'] ) ? (string) $trace['http_status'] : '200' );
-		$this->update_trace( 'last_create_webhook_api_error', '' );
-		$this->update_trace( 'last_saved_webhook_subscription_uri', $saved_id_or_uri );
+		$webhook_state = $this->extract_webhook_state_from_creation_response( $created_resources, $context );
+		$persisted     = $this->persist_webhook_state( $webhook_state );
 		$this->update_webhook_diagnostics( 'success', '' );
-
-		Logger::info( 'create_webhook_api_success', array( 'subscription' => $saved_id_or_uri, 'scope' => $webhook_state['webhook_scope'], 'scope_uri' => $webhook_state['webhook_scope_uri'], 'organization_uri' => $webhook_state['webhook_organization_uri'] ), true );
+		Logger::info( 'create_webhook_api_success', array( 'scope_mode' => $scope_mode, 'user_uri' => $persisted['webhook_user_subscription_uri'], 'organization_uri' => $persisted['webhook_organization_subscription_uri'] ), true );
 
 		$message = $refresh ? 'Webhook refreshed successfully.' : 'Webhook created successfully.';
 		return array( 'is_error' => false, 'message' => $message );
 	}
-
 	private function derive_webhook_context( $options ) {
 		$token = isset( $options['pat'] ) ? $options['pat'] : '';
-		Logger::debug( 'token_present_yes_or_no', array( 'present' => empty( $token ) ? 'no' : 'yes' ) );
-		Logger::debug( 'token_masked_preview', array( 'pat' => $this->mask_pat( $token ) ) );
 		if ( empty( $token ) ) {
 			return array( 'error' => 'Missing Personal Access Token.' );
 		}
-
 		$user_uri = Token_Helper::get_user_uri_from_pat( $token );
 		if ( empty( $user_uri ) ) {
 			return array( 'error' => 'Malformed PAT: user_uuid claim is missing.' );
 		}
-
-		$org_uri = '';
 		$client  = new Calendly_Client( $token );
-		$me      = $client->get_users_me();
-		if ( ! is_wp_error( $me ) && ! empty( $me['resource']['current_organization'] ) ) {
-			$org_uri = esc_url_raw( $me['resource']['current_organization'] );
-		} elseif ( ! empty( $options['webhook_organization_uri'] ) ) {
-			$org_uri = esc_url_raw( $options['webhook_organization_uri'] );
-			Logger::warning( 'organization_uri_reused_from_saved_settings', array( 'organization_uri' => $org_uri ) );
-		}
-
+		$org_uri = $this->get_organization_uri( $options, $client );
 		if ( empty( $org_uri ) ) {
 			return array( 'error' => 'Could not determine Calendly organization URI. Run Test Connection and try again.' );
 		}
-
+		$scope_mode = $this->determine_webhook_scope_mode( $options );
 		return array(
 			'token'            => $token,
 			'user_uri'         => $user_uri,
 			'organization_uri' => $org_uri,
+			'scope_mode'       => $scope_mode,
 		);
 	}
-
-	private function build_webhook_payload( $user_uri, $organization_uri ) {
+	private function build_webhook_payload( $scope, $user_uri, $organization_uri ) {
+		$payload = array(
+			'url'    => rest_url( 'ctfb/v1/webhook' ),
+			'events' => array( 'invitee.created', 'invitee.canceled' ),
+			'scope'  => $scope,
+		);
+		if ( 'user' === $scope ) {
+			$payload['user'] = $user_uri;
+		} else {
+			$payload['organization'] = $organization_uri;
+		}
+		return $payload;
+	}
+	private function extract_webhook_state_from_creation_response( $resources_by_scope, $context ) {
+		$user_resource = isset( $resources_by_scope['user'] ) ? $resources_by_scope['user'] : array();
+		$org_resource  = isset( $resources_by_scope['organization'] ) ? $resources_by_scope['organization'] : array();
+		$user_subscription_uri = isset( $user_resource['uri'] ) ? esc_url_raw( (string) $user_resource['uri'] ) : '';
+		$org_subscription_uri  = isset( $org_resource['uri'] ) ? esc_url_raw( (string) $org_resource['uri'] ) : '';
+		$scope_mode            = isset( $context['scope_mode'] ) ? sanitize_text_field( (string) $context['scope_mode'] ) : 'user';
+		$primary_uri           = '';
+		if ( 'organization' === $scope_mode ) {
+			$primary_uri = $org_subscription_uri;
+		} elseif ( 'both' === $scope_mode ) {
+			$primary_uri = ! empty( $org_subscription_uri ) ? $org_subscription_uri : $user_subscription_uri;
+		} else {
+			$primary_uri = $user_subscription_uri;
+		}
 		return array(
-			'url'          => rest_url( 'ctfb/v1/webhook' ),
-			'events'       => array( 'invitee.created', 'invitee.canceled' ),
-			'scope'        => 'organization',
-			'user'         => $user_uri,
-			'organization' => $organization_uri,
+			'webhook_subscription_uri'              => $primary_uri,
+			'webhook_scope'                         => $scope_mode,
+			'webhook_scope_uri'                     => 'organization' === $scope_mode ? $context['organization_uri'] : $context['user_uri'],
+			'webhook_user_uri'                      => $context['user_uri'],
+			'webhook_organization_uri'              => $context['organization_uri'],
+			'webhook_scope_mode'                    => $scope_mode,
+			'webhook_user_active'                   => ! empty( $user_subscription_uri ) ? 1 : 0,
+			'webhook_organization_active'           => ! empty( $org_subscription_uri ) ? 1 : 0,
+			'webhook_user_subscription_uri'         => $user_subscription_uri,
+			'webhook_organization_subscription_uri' => $org_subscription_uri,
 		);
 	}
-
-	private function extract_webhook_state_from_creation_response( $resource, $context ) {
-		$subscription_uri = isset( $resource['uri'] ) ? esc_url_raw( $resource['uri'] ) : '';
-		$subscription_id  = isset( $resource['id'] ) ? sanitize_text_field( $resource['id'] ) : '';
-		$scope            = isset( $resource['scope'] ) ? sanitize_text_field( $resource['scope'] ) : 'user';
-		$scope_uri        = isset( $resource['user'] ) ? esc_url_raw( $resource['user'] ) : '';
-		$user_uri         = isset( $resource['user'] ) ? esc_url_raw( $resource['user'] ) : '';
-		$organization_uri = isset( $resource['organization'] ) ? esc_url_raw( $resource['organization'] ) : '';
-
-		if ( empty( $scope_uri ) && ! empty( $context['user_uri'] ) ) {
-			$scope_uri = esc_url_raw( $context['user_uri'] );
-		}
-		if ( empty( $user_uri ) && ! empty( $context['user_uri'] ) ) {
-			$user_uri = esc_url_raw( $context['user_uri'] );
-		}
-		if ( empty( $organization_uri ) && ! empty( $context['organization_uri'] ) ) {
-			$organization_uri = esc_url_raw( $context['organization_uri'] );
-		}
-
-		return array(
-			'webhook_subscription_uri' => ! empty( $subscription_uri ) ? $subscription_uri : $subscription_id,
-			'webhook_scope'            => $scope,
-			'webhook_scope_uri'        => $scope_uri,
-			'webhook_user_uri'         => $user_uri,
-			'webhook_organization_uri' => $organization_uri,
-		);
-	}
-
 	private function persist_webhook_state( $webhook_state ) {
 		$options = get_option( 'ctfb_options', array() );
 		if ( ! is_array( $options ) ) {
 			$options = array();
 		}
-
-		$options['webhook_subscription_uri'] = isset( $webhook_state['webhook_subscription_uri'] ) ? $webhook_state['webhook_subscription_uri'] : '';
-		$options['webhook_scope']            = isset( $webhook_state['webhook_scope'] ) ? $webhook_state['webhook_scope'] : 'user';
-		$options['webhook_scope_uri']        = isset( $webhook_state['webhook_scope_uri'] ) ? $webhook_state['webhook_scope_uri'] : '';
-		$options['webhook_user_uri']         = isset( $webhook_state['webhook_user_uri'] ) ? $webhook_state['webhook_user_uri'] : '';
-		$options['webhook_organization_uri'] = isset( $webhook_state['webhook_organization_uri'] ) ? $webhook_state['webhook_organization_uri'] : '';
-
-		update_option( 'ctfb_options', $options );
-
-		$persisted = get_option( 'ctfb_options', array() );
-		Logger::debug(
-			'webhook_settings_persist_values_after_update_option',
-			array(
-				'webhook_subscription_uri' => isset( $persisted['webhook_subscription_uri'] ) ? $persisted['webhook_subscription_uri'] : '',
-				'webhook_scope'            => isset( $persisted['webhook_scope'] ) ? $persisted['webhook_scope'] : '',
-				'webhook_scope_uri'        => isset( $persisted['webhook_scope_uri'] ) ? $persisted['webhook_scope_uri'] : '',
-				'webhook_user_uri'         => isset( $persisted['webhook_user_uri'] ) ? $persisted['webhook_user_uri'] : '',
-				'webhook_organization_uri' => isset( $persisted['webhook_organization_uri'] ) ? $persisted['webhook_organization_uri'] : '',
-			)
+		$keys = array(
+			'webhook_subscription_uri',
+			'webhook_scope',
+			'webhook_scope_uri',
+			'webhook_user_uri',
+			'webhook_organization_uri',
+			'webhook_scope_mode',
+			'webhook_user_active',
+			'webhook_organization_active',
+			'webhook_user_subscription_uri',
+			'webhook_organization_subscription_uri',
 		);
-
-		$this->log_webhook_state_persistence_mismatch( $webhook_state, $persisted );
-
-		return $persisted;
+		foreach ( $keys as $key ) {
+			$options[ $key ] = isset( $webhook_state[ $key ] ) ? $webhook_state[ $key ] : '';
+		}
+		update_option( 'ctfb_options', $options );
+		return get_option( 'ctfb_options', array() );
 	}
-
 	private function log_webhook_state_persistence_mismatch( $expected, $persisted ) {
 		$keys = array(
 			'webhook_subscription_uri',
@@ -477,6 +451,11 @@ class Settings_Page {
 			'webhook_scope_uri',
 			'webhook_user_uri',
 			'webhook_organization_uri',
+			'webhook_scope_mode',
+			'webhook_user_active',
+			'webhook_organization_active',
+			'webhook_user_subscription_uri',
+			'webhook_organization_subscription_uri',
 		);
 
 		foreach ( $keys as $key ) {
@@ -495,6 +474,51 @@ class Settings_Page {
 		}
 	}
 
+	private function determine_webhook_scope_mode( $options ) {
+		$allowed = $this->get_allowed_event_types_from_options( $options );
+		if ( empty( $allowed ) ) {
+			return 'both';
+		}
+		$event_types = $this->get_available_event_types( $options );
+		$list = isset( $event_types['event_types'] ) && is_array( $event_types['event_types'] ) ? $event_types['event_types'] : array();
+		$has_user = false;
+		$has_org = false;
+		foreach ( $list as $item ) {
+			$uri = isset( $item['uri'] ) ? esc_url_raw( (string) $item['uri'] ) : '';
+			if ( empty( $uri ) || ! in_array( $uri, $allowed, true ) ) {
+				continue;
+			}
+			$source = isset( $item['source'] ) ? sanitize_text_field( (string) $item['source'] ) : '';
+			if ( false !== strpos( $source, 'organization' ) ) {
+				$has_org = true;
+			}
+			if ( false !== strpos( $source, 'user' ) ) {
+				$has_user = true;
+			}
+		}
+		if ( $has_user && $has_org ) {
+			return 'both';
+		}
+		if ( $has_org ) {
+			return 'organization';
+		}
+		return 'user';
+	}
+
+	private function delete_known_webhooks_for_scopes( $client, $options, $scopes ) {
+		foreach ( $scopes as $scope ) {
+			$key = 'user' === $scope ? 'webhook_user_subscription_uri' : 'webhook_organization_subscription_uri';
+			if ( ! empty( $options[ $key ] ) ) {
+				$trace = array();
+				$client->delete_webhook( $options[ $key ], $trace );
+			}
+		}
+		if ( ! empty( $options['webhook_subscription_uri'] ) ) {
+			$trace = array();
+			$client->delete_webhook( $options['webhook_subscription_uri'], $trace );
+		}
+	}
+
 	private function update_webhook_diagnostics( $result, $error ) {
 		$diag                               = get_option( 'ctfb_diagnostics', array() );
 		$diag['last_webhook_creation_result'] = sanitize_text_field( $result );
@@ -504,15 +528,29 @@ class Settings_Page {
 	}
 
 	private function perform_delete_webhook( $client, $options ) {
-		if ( empty( $options['webhook_subscription_uri'] ) ) {
+		$targets = array();
+		if ( ! empty( $options['webhook_subscription_uri'] ) ) {
+			$targets[] = $options['webhook_subscription_uri'];
+		}
+		if ( ! empty( $options['webhook_user_subscription_uri'] ) ) {
+			$targets[] = $options['webhook_user_subscription_uri'];
+		}
+		if ( ! empty( $options['webhook_organization_subscription_uri'] ) ) {
+			$targets[] = $options['webhook_organization_subscription_uri'];
+		}
+		$targets = array_values( array_unique( $targets ) );
+		if ( empty( $targets ) ) {
 			return 'No stored webhook subscription URI to delete.';
 		}
-		$trace    = array();
-		$response = $client->delete_webhook( $options['webhook_subscription_uri'], $trace );
-		if ( is_wp_error( $response ) ) {
-			return $response->get_error_message();
+		foreach ( $targets as $uri ) {
+			$trace = array();
+			$client->delete_webhook( $uri, $trace );
 		}
 		$options['webhook_subscription_uri'] = '';
+		$options['webhook_user_subscription_uri'] = '';
+		$options['webhook_organization_subscription_uri'] = '';
+		$options['webhook_user_active'] = 0;
+		$options['webhook_organization_active'] = 0;
 		update_option( 'ctfb_options', $options );
 		return 'Webhook deleted successfully.';
 	}
@@ -600,6 +638,15 @@ class Settings_Page {
 				<tr><td>Stored webhook scope</td><td><?php echo esc_html( isset( $options['webhook_scope'] ) ? $options['webhook_scope'] : '' ); ?></td></tr>
 				<tr><td>Stored webhook user URI</td><td><?php echo esc_html( isset( $options['webhook_user_uri'] ) ? $options['webhook_user_uri'] : '' ); ?></td></tr>
 				<tr><td>Stored webhook organization URI</td><td><?php echo esc_html( isset( $options['webhook_organization_uri'] ) ? $options['webhook_organization_uri'] : '' ); ?></td></tr>
+				<tr><td>Webhook scope mode</td><td><?php echo esc_html( isset( $options['webhook_scope_mode'] ) ? $options['webhook_scope_mode'] : '' ); ?></td></tr>
+				<tr><td>User webhook active</td><td><?php echo ! empty( $options['webhook_user_active'] ) ? 'Yes' : 'No'; ?></td></tr>
+				<tr><td>Organization webhook active</td><td><?php echo ! empty( $options['webhook_organization_active'] ) ? 'Yes' : 'No'; ?></td></tr>
+				<tr><td>Active user webhook subscription URI</td><td><?php echo esc_html( isset( $options['webhook_user_subscription_uri'] ) ? $options['webhook_user_subscription_uri'] : '' ); ?></td></tr>
+				<tr><td>Active organization webhook subscription URI</td><td><?php echo esc_html( isset( $options['webhook_organization_subscription_uri'] ) ? $options['webhook_organization_subscription_uri'] : '' ); ?></td></tr>
+				<tr><td>Organization shared/team support enabled</td><td><?php echo esc_html( isset( $diagnostics['organization_shared_team_support_enabled'] ) ? $diagnostics['organization_shared_team_support_enabled'] : '' ); ?></td></tr>
+				<tr><td>Last shared/team webhook received time</td><td><?php echo esc_html( isset( $diagnostics['last_shared_team_webhook_received_time'] ) ? $diagnostics['last_shared_team_webhook_received_time'] : '' ); ?></td></tr>
+				<tr><td>Last shared/team webhook processed time</td><td><?php echo esc_html( isset( $diagnostics['last_shared_team_webhook_processed_time'] ) ? $diagnostics['last_shared_team_webhook_processed_time'] : '' ); ?></td></tr>
+				<tr><td>Recent Bookings deduplication key used</td><td><?php echo esc_html( isset( $diagnostics['recent_bookings_deduplication_key_used'] ) ? $diagnostics['recent_bookings_deduplication_key_used'] : '' ); ?></td></tr>
 				<tr><td>Connection status</td><td><?php echo esc_html( isset( $diagnostics['connection_status'] ) ? $diagnostics['connection_status'] : '' ); ?></td></tr>
 				<tr><td>Last API check time</td><td><?php echo esc_html( isset( $diagnostics['last_api_check'] ) ? $diagnostics['last_api_check'] : '' ); ?></td></tr>
 				<tr><td>Last API error</td><td><?php echo esc_html( isset( $diagnostics['last_api_error'] ) ? $diagnostics['last_api_error'] : '' ); ?></td></tr>
@@ -687,26 +734,25 @@ class Settings_Page {
 
 	private function get_recent_bookings( $options ) {
 		$allowed_event_types = $this->get_allowed_event_types_from_options( $options );
-
 		if ( empty( $options['pat'] ) ) {
 			return array();
 		}
-
 		$client           = new Calendly_Client( $options['pat'] );
 		$user_uri         = Token_Helper::get_user_uri_from_pat( $options['pat'] );
 		$organization_uri = $this->get_organization_uri( $options, $client );
-
-		$events_by_uri = array();
+		$events_by_uri    = array();
+		$dedupe_key       = 'scheduled_event_uri';
 
 		if ( ! empty( $user_uri ) ) {
 			$user_events = $client->get_scheduled_events( $user_uri, 25 );
 			if ( ! is_wp_error( $user_events ) && ! empty( $user_events['collection'] ) && is_array( $user_events['collection'] ) ) {
 				foreach ( $user_events['collection'] as $event ) {
 					$event_uri = isset( $event['uri'] ) ? esc_url_raw( (string) $event['uri'] ) : '';
-					if ( '' !== $event_uri ) {
-						$event['ctfb_event_source'] = 'user';
-						$events_by_uri[ $event_uri ] = $event;
+					if ( '' === $event_uri ) {
+						continue;
 					}
+					$event['ctfb_event_source'] = 'user';
+					$events_by_uri[ $event_uri ] = $event;
 				}
 			}
 		}
@@ -716,13 +762,21 @@ class Settings_Page {
 			if ( ! is_wp_error( $org_events ) && ! empty( $org_events['collection'] ) && is_array( $org_events['collection'] ) ) {
 				foreach ( $org_events['collection'] as $event ) {
 					$event_uri = isset( $event['uri'] ) ? esc_url_raw( (string) $event['uri'] ) : '';
-					if ( '' !== $event_uri ) {
-						$event['ctfb_event_source'] = 'organization';
-						$events_by_uri[ $event_uri ] = $event;
+					if ( '' === $event_uri ) {
+						continue;
 					}
+					$event['ctfb_event_source'] = 'organization';
+					$events_by_uri[ $event_uri ] = $event;
 				}
 			}
 		}
+
+		$diag = get_option( 'ctfb_diagnostics', array() );
+		if ( ! is_array( $diag ) ) {
+			$diag = array();
+		}
+		$diag['recent_bookings_deduplication_key_used'] = $dedupe_key;
+		update_option( 'ctfb_diagnostics', $diag );
 
 		if ( empty( $events_by_uri ) ) {
 			return array();
@@ -730,50 +784,54 @@ class Settings_Page {
 
 		$rows = array();
 		foreach ( $events_by_uri as $event ) {
+			$event_uri      = isset( $event['uri'] ) ? esc_url_raw( (string) $event['uri'] ) : '';
+			$event_name     = isset( $event['name'] ) ? sanitize_text_field( (string) $event['name'] ) : '';
 			$event_type_uri = isset( $event['event_type'] ) ? esc_url_raw( (string) $event['event_type'] ) : '';
 			$event_source   = isset( $event['ctfb_event_source'] ) ? sanitize_text_field( (string) $event['ctfb_event_source'] ) : 'unknown';
 			$pooling_type   = isset( $event['pooling_type'] ) ? sanitize_text_field( (string) $event['pooling_type'] ) : '';
-
-			Logger::debug(
-				'recent_booking_event_evaluated',
-				array(
-					'event_type_uri' => $event_type_uri,
-					'event_name'     => isset( $event['name'] ) ? sanitize_text_field( (string) $event['name'] ) : '',
-					'pooling_type'   => $pooling_type,
-					'event_source'   => $event_source,
-				)
-			);
+			$included       = true;
+			$reason         = 'included';
 
 			if ( ! empty( $allowed_event_types ) ) {
 				if ( empty( $event_type_uri ) ) {
-					Logger::debug( 'recent_booking_filter_excluded', array( 'reason' => 'missing_event_type', 'event_name' => isset( $event['name'] ) ? sanitize_text_field( (string) $event['name'] ) : '', 'event_source' => $event_source ) );
-					continue;
-				}
-				if ( ! in_array( $event_type_uri, $allowed_event_types, true ) ) {
-					Logger::debug( 'recent_booking_filter_excluded', array( 'reason' => 'not_allowed_event_type', 'event_type_uri' => $event_type_uri, 'event_source' => $event_source ) );
-					continue;
+					$included = false;
+					$reason   = 'missing_event_type';
+				} elseif ( ! in_array( $event_type_uri, $allowed_event_types, true ) ) {
+					$included = false;
+					$reason   = 'not_allowed_event_type';
 				}
 			}
 
-			Logger::debug( 'recent_booking_filter_included', array( 'event_type_uri' => $event_type_uri, 'event_source' => $event_source, 'pooling_type' => $pooling_type ) );
-			$inv     = $client->get_event_invitees( isset( $event['uri'] ) ? $event['uri'] : '', 1 );
+			Logger::debug( 'recent_booking_row_evaluated', array(
+				'booking_event_uri'      => $event_uri,
+				'booking_event_name'     => $event_name,
+				'booking_event_type_uri' => $event_type_uri,
+				'event_name'             => $event_name,
+				'event_uri'              => $event_uri,
+				'event_type_uri'         => $event_type_uri,
+				'source'                 => $event_source,
+				'event_source'           => $event_source,
+				'pooling_type'           => $pooling_type,
+				'included'               => $included ? 'yes' : 'no',
+				'inclusion_decision'     => $reason,
+			) );
+
+			if ( ! $included ) {
+				continue;
+			}
+
+			$inv     = $client->get_event_invitees( $event_uri, 1 );
 			$invitee = ( ! is_wp_error( $inv ) && ! empty( $inv['collection'][0] ) ) ? $inv['collection'][0] : array();
 			$rows[]  = array(
 				'name'   => isset( $invitee['name'] ) ? $invitee['name'] : '',
 				'email'  => isset( $invitee['email'] ) ? $invitee['email'] : '',
-				'event'  => isset( $event['name'] ) ? $event['name'] : '',
+				'event'  => $event_name,
 				'start'  => isset( $event['start_time'] ) ? $event['start_time'] : '',
 				'status' => isset( $invitee['status'] ) ? $invitee['status'] : 'active',
 			);
 		}
 
-		usort(
-			$rows,
-			function ( $a, $b ) {
-				return strcmp( (string) $b['start'], (string) $a['start'] );
-			}
-		);
-
+		usort( $rows, function ( $a, $b ) { return strcmp( (string) $b['start'], (string) $a['start'] ); } );
 		return array_slice( $rows, 0, 10 );
 	}
 
@@ -865,10 +923,11 @@ class Settings_Page {
 		foreach ( $merged_by_uri as $uri => $item ) {
 			$name = isset( $item['name'] ) ? sanitize_text_field( (string) $item['name'] ) : $uri;
 			$kind = $this->get_event_type_kind_label( $item );
+			$source_label = isset( $item['ctfb_source'] ) ? sanitize_text_field( (string) $item['ctfb_source'] ) : 'unknown';
 			$event_types[] = array(
 				'uri'          => $uri,
 				'name'         => $name,
-				'label'        => $name . ' — ' . $kind,
+				'label'        => $name . ' — ' . $kind . ' — ' . $source_label,
 				'kind'         => $kind,
 				'pooling_type' => isset( $item['pooling_type'] ) ? sanitize_text_field( (string) $item['pooling_type'] ) : '',
 				'source'       => isset( $item['ctfb_source'] ) ? sanitize_text_field( (string) $item['ctfb_source'] ) : 'unknown',
@@ -961,6 +1020,8 @@ class Settings_Page {
 		$diag['organization_event_types_loaded_count'] = isset( $shared_diagnostics['organization_event_types_loaded_count'] ) ? (int) $shared_diagnostics['organization_event_types_loaded_count'] : 0;
 		$diag['user_event_types_loaded_count']         = isset( $shared_diagnostics['user_event_types_loaded_count'] ) ? (int) $shared_diagnostics['user_event_types_loaded_count'] : 0;
 		$diag['merged_unique_event_types_count']       = isset( $shared_diagnostics['merged_unique_event_types_count'] ) ? (int) $shared_diagnostics['merged_unique_event_types_count'] : 0;
+		$sources = isset( $shared_diagnostics['event_type_sources_used'] ) ? (string) $shared_diagnostics['event_type_sources_used'] : '';
+		$diag['organization_shared_team_support_enabled'] = false !== strpos( strtolower( $sources ), 'organization' ) ? 'yes' : 'no';
 
 		update_option( 'ctfb_diagnostics', $diag );
 	}
