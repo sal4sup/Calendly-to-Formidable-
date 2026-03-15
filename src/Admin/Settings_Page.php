@@ -91,7 +91,7 @@ class Settings_Page {
 
 		$payload = isset( $_POST['manual_payload'] ) ? wp_unslash( $_POST['manual_payload'] ) : '';
 		$data    = json_decode( $payload, true );
-		Logger::info( 'manual_test_flow', array( 'commit_to_database' => ! empty( $_POST['commit_to_database'] ) ? 'yes' : 'no' ) );
+		Logger::info( 'manual_test_flow', array( 'commit_to_database' => ! empty( $_POST['commit_to_database'] ) ? 'yes' : 'no' ), true );
 		Logger::log_raw_payload( $payload );
 		if ( ! is_array( $data ) ) {
 			Logger::error( 'manual_test_invalid_json' );
@@ -120,7 +120,7 @@ class Settings_Page {
 			$this->redirect_with_notice( 'Stored live payload is not valid JSON.', true );
 		}
 
-		Logger::info( 'replay_last_live_webhook_started' );
+		Logger::info( 'replay_last_live_webhook_started', array(), true );
 		Logger::log_raw_payload( $raw );
 		$commit = ! empty( $_POST['commit_to_database'] );
 		$sync   = new Formidable_Sync();
@@ -159,7 +159,7 @@ class Settings_Page {
 		}
 
 		$payload = $this->build_webhook_payload( $context['user_uri'], $context['organization_uri'] );
-		Logger::info( 'preview_final_webhook_payload_generated', array( 'payload' => $payload ) );
+		Logger::info( 'preview_final_webhook_payload_generated', array( 'payload' => $payload ), true );
 		update_option( 'ctfb_preview_create_webhook_payload', $payload );
 		$this->redirect_with_notice( 'Webhook payload preview generated. See Diagnostics section.', false );
 	}
@@ -222,7 +222,7 @@ class Settings_Page {
 	}
 
 	private function perform_create_webhook_flow( $refresh ) {
-		Logger::info( 'create_webhook_handler_started', array( 'refresh' => $refresh ? 'yes' : 'no' ) );
+		Logger::info( 'create_webhook_handler_started', array( 'refresh' => $refresh ? 'yes' : 'no' ), true );
 		$options = get_option( 'ctfb_options', array() );
 		Logger::debug( 'settings_loaded_for_create_webhook' );
 
@@ -243,8 +243,8 @@ class Settings_Page {
 			$client->delete_webhook( $options['webhook_subscription_uri'], $delete_trace );
 		}
 
-		Logger::info( 'create_webhook_api_call_started' );
-		Logger::info( 'create_webhook_request_payload_prepared', array( 'payload' => $payload ) );
+		Logger::info( 'create_webhook_api_call_started', array(), true );
+		Logger::info( 'create_webhook_request_payload_prepared', array( 'payload' => $payload ), true );
 
 		$trace    = array();
 		$response = $client->create_webhook( $payload['url'], 'user', $context['user_uri'], $context['organization_uri'], $trace );
@@ -258,7 +258,8 @@ class Settings_Page {
 				'http_status_code'  => isset( $trace['http_status'] ) ? $trace['http_status'] : 0,
 				'response_body'     => isset( $trace['response_body'] ) ? $trace['response_body'] : '',
 				'parsed_result'     => isset( $trace['parsed_response'] ) ? $trace['parsed_response'] : '',
-			)
+			),
+			true
 		);
 
 		if ( is_wp_error( $response ) ) {
@@ -303,7 +304,7 @@ class Settings_Page {
 		$this->update_trace( 'last_saved_webhook_subscription_uri', $saved_id_or_uri );
 		$this->update_webhook_diagnostics( 'success', '' );
 
-		Logger::info( 'create_webhook_api_success', array( 'subscription' => $saved_id_or_uri, 'scope' => $options['webhook_scope'], 'scope_uri' => $options['webhook_scope_uri'], 'organization_uri' => $options['webhook_organization_uri'] ) );
+		Logger::info( 'create_webhook_api_success', array( 'subscription' => $saved_id_or_uri, 'scope' => $options['webhook_scope'], 'scope_uri' => $options['webhook_scope_uri'], 'organization_uri' => $options['webhook_organization_uri'] ), true );
 
 		$message = $refresh ? 'Webhook refreshed successfully.' : 'Webhook created successfully.';
 		return array( 'is_error' => false, 'message' => $message );
@@ -379,51 +380,44 @@ class Settings_Page {
 		$options      = get_option( 'ctfb_options', array() );
 		$diagnostics  = get_option( 'ctfb_diagnostics', array() );
 		$bookings     = $this->get_recent_bookings( $options );
+		$debug_mode   = ! empty( $options['debug_logging'] );
 		$log_path     = Logger::get_log_file_path();
 		$log_exists   = file_exists( $log_path );
-		$log_lines    = Logger::read_tail_lines( 50 );
-		$hook_status  = get_option( 'ctfb_admin_action_hook_status', array() );
+		$log_lines    = $debug_mode ? Logger::read_tail_lines( 50 ) : array();
 		$trace_status = get_option( 'ctfb_admin_action_trace', array() );
 		$payload_prev = get_option( 'ctfb_preview_create_webhook_payload', array() );
 
 		$urls = array(
-			'test_connection' => wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_test_connection' ), 'ctfb_test_connection' ),
-			'create_webhook'  => wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_create_webhook' ), 'ctfb_create_webhook' ),
-			'refresh_webhook' => wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_refresh_webhook' ), 'ctfb_refresh_webhook' ),
-			'delete_webhook'  => wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_delete_webhook' ), 'ctfb_delete_webhook' ),
+			'test_connection'  => wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_test_connection' ), 'ctfb_test_connection' ),
+			'create_webhook'   => wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_create_webhook' ), 'ctfb_create_webhook' ),
+			'refresh_webhook'  => wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_refresh_webhook' ), 'ctfb_refresh_webhook' ),
+			'delete_webhook'   => wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_delete_webhook' ), 'ctfb_delete_webhook' ),
 			'replay_last_live' => wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_replay_last_live_webhook' ), 'ctfb_replay_last_live_webhook' ),
 		);
-		Logger::debug( 'admin_action_urls_generated', $urls );
 		?>
 		<div class="wrap">
 			<h1>Calendly to Formidable Bridge</h1>
 			<form method="post" action="options.php">
 				<?php settings_fields( 'ctfb_settings_group' ); ?>
 				<table class="form-table">
-					<tr><th>Enable Sync</th><td><label><input type="checkbox" name="ctfb_options[enabled]" value="1" <?php checked( ! empty( $options['enabled'] ) ); ?> /> Enable syncing of Calendly webhook events to Formidable</label></td></tr>
-					<tr><th>Debug logging</th><td><label><input type="checkbox" name="ctfb_options[debug_logging]" value="1" <?php checked( ! empty( $options['debug_logging'] ) ); ?> /> Enable detailed diagnostics logging</label></td></tr>
+					<tr><th>Enable Sync</th><td><label><input type="checkbox" name="ctfb_options[enabled]" value="1" <?php checked( ! empty( $options['enabled'] ) ); ?> /> Enable Calendly webhook sync to Formidable.</label></td></tr>
+					<tr><th>Debug logging</th><td><label><input type="checkbox" name="ctfb_options[debug_logging]" value="1" <?php checked( $debug_mode ); ?> /> Enable advanced diagnostics and debug logging.</label></td></tr>
 					<tr><th>Calendly Personal Access Token</th><td><input type="password" name="ctfb_options[pat]" value="" class="regular-text" autocomplete="new-password" placeholder="<?php echo esc_attr( isset( $options['pat'] ) && $options['pat'] ? $this->mask_pat( $options['pat'] ) : '' ); ?>" /></td></tr>
 					<tr><th>Fallback Company Name</th><td><input type="text" name="ctfb_options[fallback_company_name]" value="<?php echo esc_attr( isset( $options['fallback_company_name'] ) ? $options['fallback_company_name'] : '' ); ?>" class="regular-text" /></td></tr>
 					<tr><th>Fallback Freight Forwarder</th><td><select name="ctfb_options[fallback_freight_forwarder]"><option value="No" <?php selected( isset( $options['fallback_freight_forwarder'] ) ? $options['fallback_freight_forwarder'] : 'No', 'No' ); ?>>No</option><option value="Yes" <?php selected( isset( $options['fallback_freight_forwarder'] ) ? $options['fallback_freight_forwarder'] : 'No', 'Yes' ); ?>>Yes</option></select></td></tr>
 					<tr><th>Default Country</th><td><input type="text" name="ctfb_options[default_country]" value="<?php echo esc_attr( isset( $options['default_country'] ) ? $options['default_country'] : '' ); ?>" class="regular-text" /></td></tr>
 					<tr><th>Webhook endpoint URL</th><td><code><?php echo esc_html( rest_url( 'ctfb/v1/webhook' ) ); ?></code></td></tr>
-					<tr><th>Ping endpoint URL</th><td><code><?php echo esc_html( rest_url( 'ctfb/v1/ping' ) ); ?></code></td></tr>
 				</table>
 				<?php submit_button( 'Save Settings' ); ?>
 			</form>
 
+			<p><em><?php echo $debug_mode ? esc_html( 'Advanced diagnostics are enabled.' ) : esc_html( 'Advanced diagnostics are hidden while debug logging is disabled.' ); ?></em></p>
+
 			<h2>Actions</h2>
-			<p><a class="button" href="<?php echo esc_url( $urls['test_connection'] ); ?>">Test Connection</a><br/><small>Action slug: ctfb_test_connection</small></p>
-			<p><a class="button" href="<?php echo esc_url( $urls['create_webhook'] ); ?>">Create Webhook</a><br/><small>Action slug: ctfb_create_webhook</small></p>
-			<p><a class="button" href="<?php echo esc_url( $urls['refresh_webhook'] ); ?>">Refresh Webhook</a><br/><small>Action slug: ctfb_refresh_webhook</small></p>
-			<p><a class="button" href="<?php echo esc_url( $urls['delete_webhook'] ); ?>">Delete Webhook</a><br/><small>Action slug: ctfb_delete_webhook</small></p>
-			<p><a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_test_create_webhook_handler' ), 'ctfb_test_create_webhook_handler' ) ); ?>">Test Create Webhook Handler</a></p>
-			<p><a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_preview_create_webhook_payload' ), 'ctfb_preview_create_webhook_payload' ) ); ?>">Preview Final Webhook Payload</a></p>
-			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php?action=ctfb_replay_last_live_webhook' ) ); ?>" style="margin:12px 0;">
-				<?php wp_nonce_field( 'ctfb_replay_last_live_webhook' ); ?>
-				<label><input type="checkbox" name="commit_to_database" value="1" /> Commit replay to database</label>
-				<?php submit_button( 'Replay Last Live Webhook', 'secondary', 'submit', false ); ?>
-			</form>
+			<p><a class="button" href="<?php echo esc_url( $urls['test_connection'] ); ?>">Test Connection</a></p>
+			<p><a class="button" href="<?php echo esc_url( $urls['create_webhook'] ); ?>">Create Webhook</a></p>
+			<p><a class="button" href="<?php echo esc_url( $urls['refresh_webhook'] ); ?>">Refresh Webhook</a></p>
+			<p><a class="button" href="<?php echo esc_url( $urls['delete_webhook'] ); ?>">Delete Webhook</a></p>
 
 			<h2>Recent Bookings</h2>
 			<table class="widefat striped"><thead><tr><th>Invitee Name</th><th>Invitee Email</th><th>Event Name</th><th>Start Time</th><th>Status</th></tr></thead><tbody>
@@ -432,61 +426,24 @@ class Settings_Page {
 			<?php endforeach; ?>
 			</tbody></table>
 
-			<h2>Diagnostics</h2>
+			<h2>Basic Diagnostics</h2>
 			<table class="widefat striped">
 				<tr><td>Formidable active</td><td><?php echo class_exists( 'FrmEntry' ) ? 'Yes' : 'No'; ?></td></tr>
 				<tr><td>Form ID 4 ready</td><td><?php echo class_exists( 'FrmForm' ) && \FrmForm::getOne( 4 ) ? 'Yes' : 'No'; ?></td></tr>
 				<tr><td>Webhook endpoint URL</td><td><?php echo esc_html( rest_url( 'ctfb/v1/webhook' ) ); ?></td></tr>
 				<tr><td>Stored webhook subscription URI or ID</td><td><?php echo esc_html( isset( $options['webhook_subscription_uri'] ) ? $options['webhook_subscription_uri'] : '' ); ?></td></tr>
 				<tr><td>Stored webhook scope</td><td><?php echo esc_html( isset( $options['webhook_scope'] ) ? $options['webhook_scope'] : '' ); ?></td></tr>
-				<tr><td>Stored webhook user URI</td><td><?php echo esc_html( isset( $options['webhook_user_uri'] ) ? $options['webhook_user_uri'] : ( isset( $options['webhook_scope_uri'] ) ? $options['webhook_scope_uri'] : '' ) ); ?></td></tr>
+				<tr><td>Stored webhook user URI</td><td><?php echo esc_html( isset( $options['webhook_user_uri'] ) ? $options['webhook_user_uri'] : '' ); ?></td></tr>
 				<tr><td>Stored webhook organization URI</td><td><?php echo esc_html( isset( $options['webhook_organization_uri'] ) ? $options['webhook_organization_uri'] : '' ); ?></td></tr>
-				<tr><td>Last webhook creation result</td><td><?php echo esc_html( isset( $diagnostics['last_webhook_creation_result'] ) ? $diagnostics['last_webhook_creation_result'] : '' ); ?></td></tr>
-				<tr><td>Last webhook creation error</td><td><?php echo esc_html( isset( $diagnostics['last_webhook_creation_error'] ) ? $diagnostics['last_webhook_creation_error'] : '' ); ?></td></tr>
-				<tr><td>Create webhook action registered</td><td><?php echo ( isset( $hook_status['create'] ) && 'yes' === $hook_status['create'] ) ? 'Yes' : 'No'; ?></td></tr>
-				<tr><td>Refresh webhook action registered</td><td><?php echo ( isset( $hook_status['refresh'] ) && 'yes' === $hook_status['refresh'] ) ? 'Yes' : 'No'; ?></td></tr>
-				<tr><td>Delete webhook action registered</td><td><?php echo ( isset( $hook_status['delete'] ) && 'yes' === $hook_status['delete'] ) ? 'Yes' : 'No'; ?></td></tr>
-				<tr><td>Test connection action registered</td><td><?php echo ( isset( $hook_status['test'] ) && 'yes' === $hook_status['test'] ) ? 'Yes' : 'No'; ?></td></tr>
-				<tr><td>Connection status</td><td><?php echo esc_html( isset( $diagnostics['connection_status'] ) ? $diagnostics['connection_status'] : 'unknown' ); ?></td></tr>
+				<tr><td>Connection status</td><td><?php echo esc_html( isset( $diagnostics['connection_status'] ) ? $diagnostics['connection_status'] : '' ); ?></td></tr>
 				<tr><td>Last API check time</td><td><?php echo esc_html( isset( $diagnostics['last_api_check'] ) ? $diagnostics['last_api_check'] : '' ); ?></td></tr>
 				<tr><td>Last API error</td><td><?php echo esc_html( isset( $diagnostics['last_api_error'] ) ? $diagnostics['last_api_error'] : '' ); ?></td></tr>
-				<tr><td>Last fatal processing error</td><td><?php echo esc_html( isset( $diagnostics['last_fatal_processing_error'] ) ? $diagnostics['last_fatal_processing_error'] : '' ); ?></td></tr>
-				<tr><td>Last fatal processing time</td><td><?php echo esc_html( isset( $diagnostics['last_fatal_processing_time'] ) ? $diagnostics['last_fatal_processing_time'] : '' ); ?></td></tr>
-				<tr><td>Last throwable class</td><td><?php echo esc_html( isset( $diagnostics['last_throwable_class'] ) ? $diagnostics['last_throwable_class'] : '' ); ?></td></tr>
-				<tr><td>Last throwable message</td><td><?php echo esc_html( isset( $diagnostics['last_throwable_message'] ) ? $diagnostics['last_throwable_message'] : '' ); ?></td></tr>
-				<tr><td>Debug log file path</td><td><code><?php echo esc_html( $log_path ); ?></code></td></tr>
-				<tr><td>Debug log file exists</td><td><?php echo $log_exists ? 'Yes' : 'No'; ?></td></tr>
-				<tr><td>Debug log file writable</td><td><?php echo ( file_exists( $log_path ) && is_writable( $log_path ) ) || ( ! file_exists( $log_path ) && is_writable( WP_CONTENT_DIR ) ) ? 'Yes' : 'No'; ?></td></tr>
-				<tr><td>Debug log file size</td><td><?php echo $log_exists ? esc_html( size_format( filesize( $log_path ) ) ) : '0 B'; ?></td></tr>
-				<tr><td>Debug log last modified</td><td><?php echo $log_exists ? esc_html( gmdate( 'Y-m-d H:i:s', filemtime( $log_path ) ) . ' UTC' ) : ''; ?></td></tr>
+				<tr><td>Last successful sync time</td><td><?php echo esc_html( get_option( 'ctfb_last_successful_sync', '' ) ); ?></td></tr>
+				<tr><td>Last processed email</td><td><?php echo esc_html( get_option( 'ctfb_last_processed_email', '' ) ); ?></td></tr>
+				<tr><td>Last error</td><td><?php echo esc_html( get_option( 'ctfb_last_error', '' ) ); ?></td></tr>
 			</table>
 
-			<h3>Admin Action Trace</h3>
-			<table class="widefat striped">
-				<tr><td>Last create webhook action entered time</td><td><?php echo esc_html( isset( $trace_status['last_create_webhook_action_entered_time'] ) ? $trace_status['last_create_webhook_action_entered_time'] : '' ); ?></td></tr>
-				<tr><td>Last refresh webhook action entered time</td><td><?php echo esc_html( isset( $trace_status['last_refresh_webhook_action_entered_time'] ) ? $trace_status['last_refresh_webhook_action_entered_time'] : '' ); ?></td></tr>
-				<tr><td>Last delete webhook action entered time</td><td><?php echo esc_html( isset( $trace_status['last_delete_webhook_action_entered_time'] ) ? $trace_status['last_delete_webhook_action_entered_time'] : '' ); ?></td></tr>
-				<tr><td>Last test connection action entered time</td><td><?php echo esc_html( isset( $trace_status['last_test_connection_action_entered_time'] ) ? $trace_status['last_test_connection_action_entered_time'] : '' ); ?></td></tr>
-				<tr><td>Last create webhook handler result</td><td><?php echo esc_html( isset( $trace_status['last_create_webhook_handler_result'] ) ? $trace_status['last_create_webhook_handler_result'] : '' ); ?></td></tr>
-				<tr><td>Last create webhook API status</td><td><?php echo esc_html( isset( $trace_status['last_create_webhook_api_status'] ) ? $trace_status['last_create_webhook_api_status'] : '' ); ?></td></tr>
-				<tr><td>Last create webhook API error</td><td><?php echo esc_html( isset( $trace_status['last_create_webhook_api_error'] ) ? $trace_status['last_create_webhook_api_error'] : '' ); ?></td></tr>
-				<tr><td>Last saved webhook subscription URI</td><td><?php echo esc_html( isset( $trace_status['last_saved_webhook_subscription_uri'] ) ? $trace_status['last_saved_webhook_subscription_uri'] : '' ); ?></td></tr>
-			</table>
-
-			<?php if ( ! empty( $payload_prev ) ) : ?>
-				<h3>Create Webhook Payload Preview</h3>
-				<textarea rows="8" style="width:100%;" readonly="readonly"><?php echo esc_textarea( wp_json_encode( $payload_prev, JSON_PRETTY_PRINT ) ); ?></textarea>
-			<?php endif; ?>
-
-			<p>
-				<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_clear_log' ), 'ctfb_clear_log' ) ); ?>">Clear Debug Log</a>
-				<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_download_log' ), 'ctfb_download_log' ) ); ?>">Download Debug Log</a>
-			</p>
-
-			<h3>Debug log preview (last 50 lines)</h3>
-			<textarea readonly="readonly" rows="12" style="width:100%;"><?php echo esc_textarea( implode( "\n", $log_lines ) ); ?></textarea>
-
-			<h3>Recent sync attempts table</h3>
+			<h2>Recent Sync Attempts</h2>
 			<?php $this->render_logs_table(); ?>
 
 			<h2>Manual Payload Test</h2>
@@ -496,6 +453,53 @@ class Settings_Page {
 				<p><label><input type="checkbox" name="commit_to_database" value="1" /> Commit to database</label></p>
 				<?php submit_button( 'Run Manual Test' ); ?>
 			</form>
+
+			<?php if ( $debug_mode ) : ?>
+				<h2>Advanced Diagnostics</h2>
+				<table class="widefat striped">
+					<tr><td>Ping endpoint URL</td><td><code><?php echo esc_html( rest_url( 'ctfb/v1/ping' ) ); ?></code></td></tr>
+					<tr><td>Debug log file path</td><td><?php echo esc_html( $log_path ); ?></td></tr>
+					<tr><td>Debug log file exists</td><td><?php echo $log_exists ? 'Yes' : 'No'; ?></td></tr>
+					<tr><td>Debug log writable</td><td><?php echo $log_exists && is_writable( $log_path ) ? 'Yes' : 'No'; ?></td></tr>
+					<tr><td>Debug log size</td><td><?php echo $log_exists ? esc_html( size_format( filesize( $log_path ) ) ) : ''; ?></td></tr>
+					<tr><td>Debug log last modified</td><td><?php echo $log_exists ? esc_html( gmdate( 'Y-m-d H:i:s', filemtime( $log_path ) ) . ' UTC' ) : ''; ?></td></tr>
+					<tr><td>Last webhook creation result</td><td><?php echo esc_html( isset( $diagnostics['last_webhook_creation_result'] ) ? $diagnostics['last_webhook_creation_result'] : '' ); ?></td></tr>
+					<tr><td>Last webhook creation error</td><td><?php echo esc_html( isset( $diagnostics['last_webhook_creation_error'] ) ? $diagnostics['last_webhook_creation_error'] : '' ); ?></td></tr>
+					<tr><td>Last fatal processing error</td><td><?php echo esc_html( isset( $diagnostics['last_fatal_processing_error'] ) ? $diagnostics['last_fatal_processing_error'] : '' ); ?></td></tr>
+					<tr><td>Last fatal processing time</td><td><?php echo esc_html( isset( $diagnostics['last_fatal_processing_time'] ) ? $diagnostics['last_fatal_processing_time'] : '' ); ?></td></tr>
+					<tr><td>Throwable class</td><td><?php echo esc_html( isset( $diagnostics['last_throwable_class'] ) ? $diagnostics['last_throwable_class'] : '' ); ?></td></tr>
+					<tr><td>Throwable message</td><td><?php echo esc_html( isset( $diagnostics['last_throwable_message'] ) ? $diagnostics['last_throwable_message'] : '' ); ?></td></tr>
+					<tr><td>Admin Action Trace</td><td><?php echo esc_html( wp_json_encode( $trace_status ) ); ?></td></tr>
+				</table>
+
+				<p>
+					<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_test_create_webhook_handler' ), 'ctfb_test_create_webhook_handler' ) ); ?>">Test Create Webhook Handler</a>
+					<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_preview_create_webhook_payload' ), 'ctfb_preview_create_webhook_payload' ) ); ?>">Create Webhook Payload Preview</a>
+				</p>
+				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php?action=ctfb_replay_last_live_webhook' ) ); ?>" style="margin:12px 0;">
+					<?php wp_nonce_field( 'ctfb_replay_last_live_webhook' ); ?>
+					<label><input type="checkbox" name="commit_to_database" value="1" /> Commit replay to database</label>
+					<?php submit_button( 'Replay Last Live Webhook', 'secondary', 'submit', false ); ?>
+				</form>
+				<p>
+					<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_clear_log' ), 'ctfb_clear_log' ) ); ?>">Clear Debug Log</a>
+					<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ctfb_download_log' ), 'ctfb_download_log' ) ); ?>">Download Debug Log</a>
+				</p>
+
+				<?php if ( ! empty( $payload_prev ) ) : ?>
+					<h3>Create Webhook Payload Preview</h3>
+					<textarea rows="8" style="width:100%;" readonly="readonly"><?php echo esc_textarea( wp_json_encode( $payload_prev, JSON_PRETTY_PRINT ) ); ?></textarea>
+				<?php endif; ?>
+
+				<?php $last_raw_payload = get_option( 'ctfb_last_live_webhook_payload_raw', '' ); ?>
+				<?php if ( ! empty( $last_raw_payload ) ) : ?>
+					<h3>Raw Payload Preview</h3>
+					<textarea rows="8" style="width:100%;" readonly="readonly"><?php echo esc_textarea( $last_raw_payload ); ?></textarea>
+				<?php endif; ?>
+
+				<h3>Debug Log Preview (Last 50 Lines)</h3>
+				<textarea readonly="readonly" rows="12" style="width:100%;"><?php echo esc_textarea( implode( "\n", $log_lines ) ); ?></textarea>
+			<?php endif; ?>
 		</div>
 		<?php
 	}

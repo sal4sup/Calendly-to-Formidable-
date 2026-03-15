@@ -14,15 +14,15 @@ class Logger {
 		self::write( 'DEBUG', $event, $context, true );
 	}
 
-	public static function info( $event, $context = array() ) {
-		if ( ! self::is_debug_enabled() ) {
+	public static function info( $event, $context = array(), $important = false ) {
+		if ( ! self::should_log( 'INFO', $important ) ) {
 			return;
 		}
 		self::write( 'INFO', $event, $context, true );
 	}
 
 	public static function warning( $event, $context = array() ) {
-		if ( ! self::is_debug_enabled() ) {
+		if ( ! self::should_log( 'WARNING' ) ) {
 			return;
 		}
 		self::write( 'WARNING', $event, $context, true );
@@ -94,6 +94,28 @@ class Logger {
 	private static function is_debug_enabled() {
 		$options = get_option( 'ctfb_options', array() );
 		return ! empty( $options['debug_logging'] );
+	}
+
+	private static function should_log( $level, $important = false ) {
+		$level = strtoupper( (string) $level );
+
+		if ( 'ERROR' === $level ) {
+			return true;
+		}
+
+		if ( 'WARNING' === $level ) {
+			return true;
+		}
+
+		if ( 'INFO' === $level ) {
+			return $important || self::is_debug_enabled();
+		}
+
+		if ( 'DEBUG' === $level ) {
+			return self::is_debug_enabled();
+		}
+
+		return self::is_debug_enabled();
 	}
 
 	private static function write( $level, $event, $context, $store_in_db ) {

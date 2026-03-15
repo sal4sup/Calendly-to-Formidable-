@@ -7,8 +7,6 @@ use CTFB\Sync\Formidable_Sync;
 
 class Webhook_Controller {
 	public function register_routes() {
-		Logger::debug( 'rest_api_init_triggered', array( 'namespace' => 'ctfb/v1' ) );
-
 		register_rest_route(
 			'ctfb/v1',
 			'/webhook',
@@ -25,7 +23,6 @@ class Webhook_Controller {
 				),
 			)
 		);
-		Logger::info( 'webhook_route_registered', array( 'namespace' => 'ctfb/v1', 'route' => '/webhook' ) );
 
 		register_rest_route(
 			'ctfb/v1',
@@ -36,11 +33,10 @@ class Webhook_Controller {
 				'permission_callback' => '__return_true',
 			)
 		);
-		Logger::info( 'ping_route_registered', array( 'namespace' => 'ctfb/v1', 'route' => '/ping' ) );
 	}
 
 	public function ping() {
-		Logger::info( 'ping_request_received' );
+		Logger::info( 'ping_request_received', array(), true );
 		return new \WP_REST_Response(
 			array(
 				'success' => true,
@@ -56,7 +52,8 @@ class Webhook_Controller {
 			array(
 				'uri'    => $request->get_route(),
 				'source' => $this->detect_request_source(),
-			)
+			),
+			true
 		);
 		return new \WP_REST_Response(
 			array(
@@ -86,11 +83,11 @@ class Webhook_Controller {
 				'raw_size'     => $raw_size,
 				'body_empty'   => empty( $raw ) ? 'yes' : 'no',
 				'source'       => $source,
-			)
+			),
+			true
 		);
 
 		if ( ! empty( $raw ) ) {
-			Logger::debug( 'webhook_payload_read', array( 'bytes' => $raw_size ) );
 			update_option( 'ctfb_last_live_webhook_payload_raw', $raw, false );
 		}
 		Logger::log_raw_payload( $raw );
@@ -98,49 +95,33 @@ class Webhook_Controller {
 		$data = json_decode( $raw, true );
 		if ( ! is_array( $data ) ) {
 			Logger::error( 'payload_structure_invalid', array( 'json_decode' => 'failed', 'source' => $source ) );
-			Logger::info( 'webhook_response_ready', array( 'status' => 400 ) );
-			Logger::info( 'webhook_response_sent', array( 'status' => 400, 'message' => 'Malformed JSON' ) );
 			return new \WP_REST_Response( array( 'message' => 'Malformed JSON.' ), 400 );
 		}
 
 		$payload    = ( isset( $data['payload'] ) && is_array( $data['payload'] ) ) ? $data['payload'] : array();
 		$event_type = isset( $data['event'] ) ? sanitize_text_field( $data['event'] ) : '';
 		$email      = isset( $payload['email'] ) ? sanitize_email( $payload['email'] ) : '';
-		Logger::debug( 'payload_root_keys', array( 'keys' => implode( ',', array_keys( $data ) ) ) );
-		Logger::debug( 'payload_structure_valid', array( 'available_payload_keys' => implode( ',', array_keys( $payload ) ) ) );
-		Logger::debug( 'event_type_detected', array( 'event' => $event_type ) );
-		Logger::debug( 'invitee_email_detected', array( 'invitee_email' => $email ) );
-		Logger::debug( 'sync_state_checked', array( 'sync_enabled' => $sync_enabled ? 'yes' : 'no' ) );
 
 		if ( ! $sync_enabled ) {
 			Logger::warning( 'webhook_processing_stopped', array( 'reason' => 'sync_disabled' ) );
-			Logger::info( 'webhook_response_ready', array( 'status' => 422 ) );
-			Logger::info( 'webhook_response_sent', array( 'status' => 422, 'message' => 'Sync is disabled.' ) );
 			return new \WP_REST_Response( array( 'message' => 'Sync is disabled.' ), 422 );
 		}
 
 		try {
-			Logger::debug( 'webhook_processing_continues', array( 'source' => $source ) );
 			$sync   = new Formidable_Sync();
 			$result = $sync->process( $data, true, $source );
 
 			if ( empty( $result['ok'] ) ) {
 				update_option( 'ctfb_last_error', $result['message'] );
 				Logger::error( 'webhook_processing_failed', array( 'reason' => $result['message'] ) );
-				Logger::info( 'webhook_response_ready', array( 'status' => 422 ) );
-				Logger::info( 'webhook_response_sent', array( 'status' => 422, 'message' => $result['message'] ) );
 				return new \WP_REST_Response( array( 'message' => $result['message'] ), 422 );
 			}
 
-			Logger::info( 'formidable_create_completed', array( 'entry_id' => isset( $result['entry_id'] ) ? $result['entry_id'] : 0 ) );
-			Logger::info( 'webhook_response_ready', array( 'status' => 200 ) );
-			Logger::info( 'webhook_response_sent', array( 'status' => 200, 'message' => $result['message'] ) );
+			Logger::info( 'formidable_create_completed', array( 'entry_id' => isset( $result['entry_id'] ) ? $result['entry_id'] : 0 ), true );
 			return new \WP_REST_Response( array( 'message' => $result['message'] ), 200 );
 		} catch ( \Throwable $e ) {
 			$this->log_throwable( $e );
 			$this->write_failure_row( $email, $event_type, $e->getMessage() );
-			Logger::info( 'webhook_response_ready', array( 'status' => 500 ) );
-			Logger::info( 'webhook_response_sent', array( 'status' => 500, 'message' => 'Webhook runtime error.' ) );
 			return new \WP_REST_Response(
 				array(
 					'message' => 'Webhook runtime error.',
@@ -170,7 +151,7 @@ class Webhook_Controller {
 					)
 				);
 
-				$diag                              = get_option( 'ctfb_diagnostics', array() );
+				$diag                                = get_option( 'ctfb_diagnostics', array() );
 				$diag['last_fatal_processing_error'] = isset( $error['message'] ) ? sanitize_text_field( $error['message'] ) : '';
 				$diag['last_fatal_processing_time']  = current_time( 'mysql' );
 				update_option( 'ctfb_diagnostics', $diag );
