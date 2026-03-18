@@ -122,15 +122,17 @@ class Formidable_Sync {
 			update_option( 'ctfb_diagnostics', $diag );
 
 			$host_assignment = $this->extract_host_assignment( $resource );
-			Logger::debug(
-				'host_assignment_detected',
-				array(
-					'value' => ! empty( $host_assignment['host_user_uri'] ) ? 'yes' : 'no',
-				)
-			);
-			Logger::debug( 'host_user_name', array( 'value' => $host_assignment['host_user_name'] ) );
-			Logger::debug( 'host_user_email', array( 'value' => $host_assignment['host_user_email'] ) );
-			Logger::debug( 'host_user_uri', array( 'value' => $host_assignment['host_user_uri'] ) );
+			$host_detected   = isset( $host_assignment['host_membership_count'] ) && (int) $host_assignment['host_membership_count'] > 0;
+			if ( $host_detected ) {
+				Logger::debug( 'host_assignment_detected' );
+				Logger::debug( 'host_membership_count', array( 'value' => isset( $host_assignment['host_membership_count'] ) ? (int) $host_assignment['host_membership_count'] : 0 ) );
+				Logger::debug( 'assigned_host_user_name', array( 'value' => $host_assignment['assigned_host_user_name'] ) );
+				Logger::debug( 'assigned_host_user_email', array( 'value' => $host_assignment['assigned_host_user_email'] ) );
+				Logger::debug( 'assigned_host_user_uri', array( 'value' => $host_assignment['assigned_host_user_uri'] ) );
+			} else {
+				Logger::debug( 'host_assignment_missing' );
+			}
+			$this->store_host_diagnostics( $host_assignment );
 			Logger::debug(
 				'shared_team_booking_inclusion',
 				array(
@@ -145,9 +147,9 @@ class Formidable_Sync {
 			Logger::debug(
 				'host_assignment_extracted',
 				array(
-					'host_user_uri'   => $host_assignment['host_user_uri'],
-					'host_user_email' => $host_assignment['host_user_email'],
-					'host_user_name'  => $host_assignment['host_user_name'],
+					'assigned_host_user_uri'   => $host_assignment['assigned_host_user_uri'],
+					'assigned_host_user_email' => $host_assignment['assigned_host_user_email'],
+					'assigned_host_user_name'  => $host_assignment['assigned_host_user_name'],
 				)
 			);
 
@@ -200,6 +202,8 @@ class Formidable_Sync {
 			if ( empty( $mapped['fields']['26'][0] ) ) {
 				Logger::warning( 'invalid_checkbox_value' );
 			}
+
+			$mapped['fields'] = $this->apply_host_field_mapping( $mapped['fields'], $host_assignment, $options );
 
 			$diagnostics = isset( $mapped['diagnostics'] ) && is_array( $mapped['diagnostics'] ) ? $mapped['diagnostics'] : array();
 			$diagnostics['host_assignment'] = $host_assignment;
@@ -352,9 +356,10 @@ class Formidable_Sync {
 
 	private function extract_host_assignment( $resource ) {
 		$host = array(
-			'host_user_uri'   => '',
-			'host_user_email' => '',
-			'host_user_name'  => '',
+			'assigned_host_user_uri'   => '',
+			'assigned_host_user_email' => '',
+			'assigned_host_user_name'  => '',
+			'host_membership_count'    => 0,
 		);
 
 		if ( ! isset( $resource['scheduled_event'] ) || ! is_array( $resource['scheduled_event'] ) ) {
@@ -362,10 +367,17 @@ class Formidable_Sync {
 		}
 
 		$scheduled_event = $resource['scheduled_event'];
-		if ( ! isset( $scheduled_event['event_memberships'] ) || ! is_array( $scheduled_event['event_memberships'] ) ) {
-			if ( isset( $scheduled_event['event_memberships'] ) ) {
-				Logger::warning( 'event_memberships_unexpected_shape', array( 'value_type' => gettype( $scheduled_event['event_memberships'] ) ) );
-			}
+		if ( ! isset( $scheduled_event['event_memberships'] ) ) {
+			return $host;
+		}
+
+		if ( ! is_array( $scheduled_event['event_memberships'] ) ) {
+			Logger::warning( 'event_memberships_unexpected_shape', array( 'value_type' => gettype( $scheduled_event['event_memberships'] ) ) );
+			return $host;
+		}
+
+		$host['host_membership_count'] = count( $scheduled_event['event_memberships'] );
+		if ( 0 === $host['host_membership_count'] ) {
 			return $host;
 		}
 
@@ -375,16 +387,68 @@ class Formidable_Sync {
 		}
 
 		if ( isset( $first_membership['user'] ) && is_string( $first_membership['user'] ) ) {
-			$host['host_user_uri'] = esc_url_raw( $first_membership['user'] );
+			$host['assigned_host_user_uri'] = esc_url_raw( $first_membership['user'] );
 		}
 		if ( isset( $first_membership['user_email'] ) && is_string( $first_membership['user_email'] ) ) {
-			$host['host_user_email'] = sanitize_email( $first_membership['user_email'] );
+			$host['assigned_host_user_email'] = sanitize_email( $first_membership['user_email'] );
 		}
 		if ( isset( $first_membership['user_name'] ) && is_string( $first_membership['user_name'] ) ) {
-			$host['host_user_name'] = sanitize_text_field( $first_membership['user_name'] );
+			$host['assigned_host_user_name'] = sanitize_text_field( $first_membership['user_name'] );
 		}
 
 		return $host;
+	}
+
+	private function apply_host_field_mapping( $fields, $host_assignment, $options ) {
+		if ( ! is_array( $fields ) ) {
+			$fields = array();
+		}
+
+		$host_name_field_id     = isset( $options['assigned_host_name_field_id'] ) ? trim( (string) $options['assigned_host_name_field_id'] ) : '';
+		$host_email_field_id    = isset( $options['assigned_host_email_field_id'] ) ? trim( (string) $options['assigned_host_email_field_id'] ) : '';
+		$host_user_uri_field_id = isset( $options['assigned_host_user_uri_field_id'] ) ? trim( (string) $options['assigned_host_user_uri_field_id'] ) : '';
+
+		Logger::debug( 'host_field_mapping_started' );
+		Logger::debug( 'host_field_id_name', array( 'value' => $host_name_field_id ) );
+		Logger::debug( 'host_field_id_email', array( 'value' => $host_email_field_id ) );
+		Logger::debug( 'host_field_id_user_uri', array( 'value' => $host_user_uri_field_id ) );
+
+		if ( '' !== $host_name_field_id ) {
+			$fields[ $host_name_field_id ] = isset( $host_assignment['assigned_host_user_name'] ) ? (string) $host_assignment['assigned_host_user_name'] : '';
+		}
+		if ( '' !== $host_email_field_id ) {
+			$fields[ $host_email_field_id ] = isset( $host_assignment['assigned_host_user_email'] ) ? (string) $host_assignment['assigned_host_user_email'] : '';
+		}
+		if ( '' !== $host_user_uri_field_id ) {
+			$fields[ $host_user_uri_field_id ] = isset( $host_assignment['assigned_host_user_uri'] ) ? (string) $host_assignment['assigned_host_user_uri'] : '';
+		}
+
+		Logger::debug(
+			'final_host_values_added_to_item_meta',
+			array(
+				'host_field_id_name'      => $host_name_field_id,
+				'host_field_id_email'     => $host_email_field_id,
+				'host_field_id_user_uri'  => $host_user_uri_field_id,
+				'assigned_host_user_name' => isset( $host_assignment['assigned_host_user_name'] ) ? $host_assignment['assigned_host_user_name'] : '',
+				'assigned_host_user_email'=> isset( $host_assignment['assigned_host_user_email'] ) ? $host_assignment['assigned_host_user_email'] : '',
+				'assigned_host_user_uri'  => isset( $host_assignment['assigned_host_user_uri'] ) ? $host_assignment['assigned_host_user_uri'] : '',
+			)
+		);
+		Logger::debug( 'host_field_mapping_completed' );
+
+		return $fields;
+	}
+
+	private function store_host_diagnostics( $host_assignment ) {
+		$diag = get_option( 'ctfb_diagnostics', array() );
+		if ( ! is_array( $diag ) ) {
+			$diag = array();
+		}
+
+		$diag['last_assigned_host_name'] = isset( $host_assignment['assigned_host_user_name'] ) ? sanitize_text_field( (string) $host_assignment['assigned_host_user_name'] ) : '';
+		$diag['last_assigned_host_email'] = isset( $host_assignment['assigned_host_user_email'] ) ? sanitize_email( (string) $host_assignment['assigned_host_user_email'] ) : '';
+		$diag['last_assigned_host_user_uri'] = isset( $host_assignment['assigned_host_user_uri'] ) ? esc_url_raw( (string) $host_assignment['assigned_host_user_uri'] ) : '';
+		update_option( 'ctfb_diagnostics', $diag );
 	}
 
 	private function handle_cancel( $invitee_uri, $hash, $email ) {

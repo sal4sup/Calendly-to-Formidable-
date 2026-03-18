@@ -42,6 +42,9 @@ class Settings_Page {
 		$sanitized['webhook_user_subscription_uri'] = isset( $existing['webhook_user_subscription_uri'] ) ? $existing['webhook_user_subscription_uri'] : '';
 		$sanitized['webhook_organization_subscription_uri'] = isset( $existing['webhook_organization_subscription_uri'] ) ? $existing['webhook_organization_subscription_uri'] : '';
 		$sanitized['allowed_event_types']        = $this->sanitize_allowed_event_types( $input, $existing );
+		$sanitized['assigned_host_name_field_id'] = isset( $input['assigned_host_name_field_id'] ) ? sanitize_text_field( $input['assigned_host_name_field_id'] ) : ( isset( $existing['assigned_host_name_field_id'] ) ? sanitize_text_field( $existing['assigned_host_name_field_id'] ) : '' );
+		$sanitized['assigned_host_email_field_id'] = isset( $input['assigned_host_email_field_id'] ) ? sanitize_text_field( $input['assigned_host_email_field_id'] ) : ( isset( $existing['assigned_host_email_field_id'] ) ? sanitize_text_field( $existing['assigned_host_email_field_id'] ) : '' );
+		$sanitized['assigned_host_user_uri_field_id'] = isset( $input['assigned_host_user_uri_field_id'] ) ? sanitize_text_field( $input['assigned_host_user_uri_field_id'] ) : ( isset( $existing['assigned_host_user_uri_field_id'] ) ? sanitize_text_field( $existing['assigned_host_user_uri_field_id'] ) : '' );
 
 		$sanitized = $this->preserve_existing_webhook_state( $sanitized, $existing );
 		return $sanitized;
@@ -589,6 +592,9 @@ class Settings_Page {
 					<tr><th>Fallback Company Name</th><td><input type="text" name="ctfb_options[fallback_company_name]" value="<?php echo esc_attr( isset( $options['fallback_company_name'] ) ? $options['fallback_company_name'] : '' ); ?>" class="regular-text" /></td></tr>
 					<tr><th>Fallback Freight Forwarder</th><td><select name="ctfb_options[fallback_freight_forwarder]"><option value="No" <?php selected( isset( $options['fallback_freight_forwarder'] ) ? $options['fallback_freight_forwarder'] : 'No', 'No' ); ?>>No</option><option value="Yes" <?php selected( isset( $options['fallback_freight_forwarder'] ) ? $options['fallback_freight_forwarder'] : 'No', 'Yes' ); ?>>Yes</option></select></td></tr>
 					<tr><th>Default Country</th><td><input type="text" name="ctfb_options[default_country]" value="<?php echo esc_attr( isset( $options['default_country'] ) ? $options['default_country'] : '' ); ?>" class="regular-text" /></td></tr>
+					<tr><th>Assigned Host Name Field ID</th><td><input type="text" name="ctfb_options[assigned_host_name_field_id]" value="<?php echo esc_attr( isset( $options['assigned_host_name_field_id'] ) ? $options['assigned_host_name_field_id'] : '' ); ?>" class="regular-text" /><p class="description">Formidable field ID where the assigned host name will be stored.</p></td></tr>
+					<tr><th>Assigned Host Email Field ID</th><td><input type="text" name="ctfb_options[assigned_host_email_field_id]" value="<?php echo esc_attr( isset( $options['assigned_host_email_field_id'] ) ? $options['assigned_host_email_field_id'] : '' ); ?>" class="regular-text" /><p class="description">Formidable field ID where the assigned host email will be stored.</p></td></tr>
+					<tr><th>Assigned Host User URI Field ID</th><td><input type="text" name="ctfb_options[assigned_host_user_uri_field_id]" value="<?php echo esc_attr( isset( $options['assigned_host_user_uri_field_id'] ) ? $options['assigned_host_user_uri_field_id'] : '' ); ?>" class="regular-text" /><p class="description">Formidable field ID where the assigned host user URI will be stored.</p></td></tr>
 					<tr>
 						<th>Allowed Event Types</th>
 						<td>
@@ -652,6 +658,12 @@ class Settings_Page {
 				<tr><td>Last API error</td><td><?php echo esc_html( isset( $diagnostics['last_api_error'] ) ? $diagnostics['last_api_error'] : '' ); ?></td></tr>
 				<tr><td>Allowed event types count</td><td><?php echo esc_html( count( $allowed_event_type_uris ) ); ?></td></tr>
 				<tr><td>Allowed event type URIs</td><td><?php echo esc_html( implode( ', ', $allowed_event_type_uris ) ); ?></td></tr>
+				<tr><td>Assigned Host Name Field ID</td><td><?php echo esc_html( isset( $options['assigned_host_name_field_id'] ) ? $options['assigned_host_name_field_id'] : '' ); ?></td></tr>
+				<tr><td>Assigned Host Email Field ID</td><td><?php echo esc_html( isset( $options['assigned_host_email_field_id'] ) ? $options['assigned_host_email_field_id'] : '' ); ?></td></tr>
+				<tr><td>Assigned Host User URI Field ID</td><td><?php echo esc_html( isset( $options['assigned_host_user_uri_field_id'] ) ? $options['assigned_host_user_uri_field_id'] : '' ); ?></td></tr>
+				<tr><td>Last assigned host name</td><td><?php echo esc_html( isset( $diagnostics['last_assigned_host_name'] ) ? $diagnostics['last_assigned_host_name'] : '' ); ?></td></tr>
+				<tr><td>Last assigned host email</td><td><?php echo esc_html( isset( $diagnostics['last_assigned_host_email'] ) ? $diagnostics['last_assigned_host_email'] : '' ); ?></td></tr>
+				<tr><td>Last assigned host user URI</td><td><?php echo esc_html( isset( $diagnostics['last_assigned_host_user_uri'] ) ? $diagnostics['last_assigned_host_user_uri'] : '' ); ?></td></tr>
 				<tr><td>Event type sources used</td><td><?php echo esc_html( isset( $diagnostics['event_type_sources_used'] ) ? $diagnostics['event_type_sources_used'] : '' ); ?></td></tr>
 				<tr><td>Organization event types loaded count</td><td><?php echo esc_html( isset( $diagnostics['organization_event_types_loaded_count'] ) ? (int) $diagnostics['organization_event_types_loaded_count'] : 0 ); ?></td></tr>
 				<tr><td>User event types loaded count</td><td><?php echo esc_html( isset( $diagnostics['user_event_types_loaded_count'] ) ? (int) $diagnostics['user_event_types_loaded_count'] : 0 ); ?></td></tr>

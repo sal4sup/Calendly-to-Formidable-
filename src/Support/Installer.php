@@ -21,6 +21,9 @@ class Installer {
 			'webhook_organization_active' => 0,
 			'webhook_user_subscription_uri' => '',
 			'webhook_organization_subscription_uri' => '',
+			'assigned_host_name_field_id' => '',
+			'assigned_host_email_field_id' => '',
+			'assigned_host_user_uri_field_id' => '',
 		);
 	}
 
