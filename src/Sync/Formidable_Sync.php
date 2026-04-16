@@ -204,9 +204,13 @@ class Formidable_Sync {
 			}
 
 			$mapped['fields'] = $this->apply_host_field_mapping( $mapped['fields'], $host_assignment, $options );
+			$utm_tracking     = $this->extract_tracking_values( $resource );
+			$mapped['fields'] = $this->apply_utm_field_mapping( $mapped['fields'], $utm_tracking );
+			$this->store_utm_diagnostics( $utm_tracking );
 
 			$diagnostics = isset( $mapped['diagnostics'] ) && is_array( $mapped['diagnostics'] ) ? $mapped['diagnostics'] : array();
 			$diagnostics['host_assignment'] = $host_assignment;
+			$diagnostics['utm_tracking']    = $utm_tracking;
 			Logger::debug(
 				'final_item_meta_payload_prepared',
 				array(
@@ -439,6 +443,80 @@ class Formidable_Sync {
 		return $fields;
 	}
 
+	private function extract_tracking_values( $resource ) {
+		$tracking = array();
+		if ( isset( $resource['tracking'] ) && is_array( $resource['tracking'] ) ) {
+			$tracking = $resource['tracking'];
+		}
+
+		$utm_tracking = array(
+			'utm_source'   => $this->sanitize_tracking_value( isset( $tracking['utm_source'] ) ? $tracking['utm_source'] : '' ),
+			'utm_medium'   => $this->sanitize_tracking_value( isset( $tracking['utm_medium'] ) ? $tracking['utm_medium'] : '' ),
+			'utm_campaign' => $this->sanitize_tracking_value( isset( $tracking['utm_campaign'] ) ? $tracking['utm_campaign'] : '' ),
+			'utm_term'     => $this->sanitize_tracking_value( isset( $tracking['utm_term'] ) ? $tracking['utm_term'] : '' ),
+			'utm_content'  => $this->sanitize_tracking_value( isset( $tracking['utm_content'] ) ? $tracking['utm_content'] : '' ),
+		);
+
+		$utm_tracking['combined_source_id'] = $this->build_combined_source_id( $utm_tracking['utm_source'], $utm_tracking['utm_medium'] );
+
+		Logger::debug( 'tracking_payload_detected', array( 'present' => ! empty( $tracking ) ? 'yes' : 'no' ) );
+		Logger::debug( 'utm_source_value', array( 'value' => $utm_tracking['utm_source'] ) );
+		Logger::debug( 'utm_medium_value', array( 'value' => $utm_tracking['utm_medium'] ) );
+		Logger::debug( 'utm_campaign_value', array( 'value' => $utm_tracking['utm_campaign'] ) );
+		Logger::debug( 'utm_term_value', array( 'value' => $utm_tracking['utm_term'] ) );
+		Logger::debug( 'utm_content_value', array( 'value' => $utm_tracking['utm_content'] ) );
+
+		return $utm_tracking;
+	}
+
+	private function apply_utm_field_mapping( $fields, $utm_tracking ) {
+		if ( ! is_array( $fields ) ) {
+			$fields = array();
+		}
+
+		if ( ! empty( $utm_tracking['combined_source_id'] ) ) {
+			$fields['69'] = $utm_tracking['combined_source_id'];
+		}
+
+		if ( ! empty( $utm_tracking['utm_campaign'] ) ) {
+			$fields['70'] = $utm_tracking['utm_campaign'];
+		}
+
+		if ( ! empty( $utm_tracking['utm_term'] ) ) {
+			$fields['143'] = $utm_tracking['utm_term'];
+		}
+
+		Logger::debug( 'field_69_source_id_resolved', array( 'value' => isset( $fields['69'] ) ? $fields['69'] : '' ) );
+		Logger::debug( 'field_70_campaign_id_resolved', array( 'value' => isset( $fields['70'] ) ? $fields['70'] : '' ) );
+		Logger::debug( 'field_143_utmterm_resolved', array( 'value' => isset( $fields['143'] ) ? $fields['143'] : '' ) );
+
+		return $fields;
+	}
+
+	private function sanitize_tracking_value( $value ) {
+		if ( ! is_scalar( $value ) ) {
+			return '';
+		}
+
+		return sanitize_text_field( trim( (string) $value ) );
+	}
+
+	private function build_combined_source_id( $utm_source, $utm_medium ) {
+		if ( '' !== $utm_source && '' !== $utm_medium ) {
+			return sanitize_text_field( $utm_source . ' / ' . $utm_medium );
+		}
+
+		if ( '' !== $utm_source ) {
+			return $utm_source;
+		}
+
+		if ( '' !== $utm_medium ) {
+			return $utm_medium;
+		}
+
+		return '';
+	}
+
 	private function store_host_diagnostics( $host_assignment ) {
 		$diag = get_option( 'ctfb_diagnostics', array() );
 		if ( ! is_array( $diag ) ) {
@@ -448,6 +526,21 @@ class Formidable_Sync {
 		$diag['last_assigned_host_name'] = isset( $host_assignment['assigned_host_user_name'] ) ? sanitize_text_field( (string) $host_assignment['assigned_host_user_name'] ) : '';
 		$diag['last_assigned_host_email'] = isset( $host_assignment['assigned_host_user_email'] ) ? sanitize_email( (string) $host_assignment['assigned_host_user_email'] ) : '';
 		$diag['last_assigned_host_user_uri'] = isset( $host_assignment['assigned_host_user_uri'] ) ? esc_url_raw( (string) $host_assignment['assigned_host_user_uri'] ) : '';
+		update_option( 'ctfb_diagnostics', $diag );
+	}
+
+	private function store_utm_diagnostics( $utm_tracking ) {
+		$diag = get_option( 'ctfb_diagnostics', array() );
+		if ( ! is_array( $diag ) ) {
+			$diag = array();
+		}
+
+		$diag['last_utm_source']              = isset( $utm_tracking['utm_source'] ) ? sanitize_text_field( (string) $utm_tracking['utm_source'] ) : '';
+		$diag['last_utm_medium']              = isset( $utm_tracking['utm_medium'] ) ? sanitize_text_field( (string) $utm_tracking['utm_medium'] ) : '';
+		$diag['last_utm_campaign']            = isset( $utm_tracking['utm_campaign'] ) ? sanitize_text_field( (string) $utm_tracking['utm_campaign'] ) : '';
+		$diag['last_utm_term']                = isset( $utm_tracking['utm_term'] ) ? sanitize_text_field( (string) $utm_tracking['utm_term'] ) : '';
+		$diag['last_utm_content']             = isset( $utm_tracking['utm_content'] ) ? sanitize_text_field( (string) $utm_tracking['utm_content'] ) : '';
+		$diag['last_combined_source_id_value'] = isset( $utm_tracking['combined_source_id'] ) ? sanitize_text_field( (string) $utm_tracking['combined_source_id'] ) : '';
 		update_option( 'ctfb_diagnostics', $diag );
 	}
 

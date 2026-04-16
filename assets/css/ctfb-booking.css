@@ -1,0 +1,454 @@
+/* ── Base ──────────────────────────────────────────────── */
+
+.ctfb-booking {
+    max-width: 760px;
+    margin: 0 auto;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+    color: #1a1a2e;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+}
+
+.ctfb-booking *,
+.ctfb-booking *::before,
+.ctfb-booking *::after {
+    box-sizing: border-box;
+}
+
+/* ── Panels ───────────────────────────────────────────── */
+
+.ctfb-panel {
+    animation: ctfbFadeIn .2s ease;
+}
+
+@keyframes ctfbFadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Loader ───────────────────────────────────────────── */
+
+.ctfb-loader {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 48px 16px;
+    color: #6b7280;
+    font-size: 14px;
+}
+
+.ctfb-spinner {
+    width: 22px;
+    height: 22px;
+    border: 3px solid #e5e7eb;
+    border-top-color: #0069ff;
+    border-radius: 50%;
+    animation: ctfbSpin .6s linear infinite;
+}
+
+@keyframes ctfbSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* ── Error ────────────────────────────────────────────── */
+
+.ctfb-global-error,
+.ctfb-booking-error {
+    text-align: center;
+    padding: 24px 16px;
+    color: #b91c1c;
+    font-size: 14px;
+}
+
+.ctfb-form-error {
+    color: #b91c1c;
+    font-size: 13px;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    background: #fef2f2;
+    border-radius: 6px;
+}
+
+/* ── Calendar layout ──────────────────────────────────── */
+
+.ctfb-calendar-layout {
+    display: flex;
+    gap: 28px;
+    align-items: flex-start;
+}
+
+.ctfb-calendar {
+    flex: 0 0 320px;
+    min-width: 0;
+}
+
+.ctfb-times-panel {
+    flex: 1 1 200px;
+    min-width: 180px;
+    max-height: 370px;
+    overflow-y: auto;
+    animation: ctfbFadeIn .2s ease;
+}
+
+@media (max-width: 640px) {
+    .ctfb-calendar-layout {
+        flex-direction: column;
+        gap: 20px;
+    }
+    .ctfb-calendar {
+        flex: none;
+        width: 100%;
+        max-width: 360px;
+    }
+    .ctfb-times-panel {
+        max-height: none;
+    }
+}
+
+/* ── Calendar header ──────────────────────────────────── */
+
+.ctfb-cal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+
+.ctfb-cal-title {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.ctfb-cal-nav {
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #fff;
+    color: #374151;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+    padding: 0;
+    line-height: 1;
+}
+
+.ctfb-cal-nav:hover:not(:disabled) {
+    background: #f3f4f6;
+    border-color: #d1d5db;
+}
+
+.ctfb-cal-nav:disabled {
+    opacity: .35;
+    cursor: not-allowed;
+}
+
+/* ── Calendar weekdays ────────────────────────────────── */
+
+.ctfb-cal-weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    text-align: center;
+    font-size: 12px;
+    font-weight: 600;
+    color: #9ca3af;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    margin-bottom: 6px;
+}
+
+/* ── Calendar grid ────────────────────────────────────── */
+
+.ctfb-cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+}
+
+.ctfb-cal-empty {
+    text-align: center;
+    padding: 18px 8px;
+    font-size: 14px;
+    color: #9ca3af;
+}
+
+.ctfb-cal-cell {
+    position: relative;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: #374151;
+    cursor: pointer;
+    padding: 0;
+    transition: background .12s, color .12s;
+}
+
+.ctfb-cal-cell--empty {
+    cursor: default;
+}
+
+.ctfb-cal-cell--past {
+    color: #d1d5db;
+    cursor: default;
+}
+
+.ctfb-cal-cell--unavailable {
+    color: #d1d5db;
+    cursor: default;
+}
+
+.ctfb-cal-cell--today:not(.ctfb-cal-cell--selected) {
+    font-weight: 700;
+    box-shadow: inset 0 0 0 2px #0069ff;
+}
+
+.ctfb-cal-cell--available {
+    font-weight: 600;
+    color: #0069ff;
+}
+
+.ctfb-cal-cell--available::after {
+    content: '';
+    position: absolute;
+    bottom: 3px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #0069ff;
+}
+
+.ctfb-cal-cell--available:hover {
+    background: #eff6ff;
+}
+
+.ctfb-cal-cell--selected,
+.ctfb-cal-cell--selected:hover {
+    background: #0069ff;
+    color: #fff;
+}
+
+.ctfb-cal-cell--selected::after {
+    background: #fff;
+}
+
+/* ── Time slots panel ─────────────────────────────────── */
+
+.ctfb-times-title {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0 0 12px 0;
+    color: #1a1a2e;
+}
+
+.ctfb-times-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ctfb-time-btn {
+    display: block;
+    width: 100%;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: center;
+    border: 1px solid #0069ff;
+    border-radius: 8px;
+    background: #fff;
+    color: #0069ff;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+}
+
+.ctfb-time-btn:hover {
+    background: #eff6ff;
+}
+
+.ctfb-time-btn--selected,
+.ctfb-time-btn--selected:hover {
+    background: #0069ff;
+    color: #fff;
+}
+
+/* ── Form ─────────────────────────────────────────────── */
+
+.ctfb-form-header {
+    margin-bottom: 20px;
+}
+
+.ctfb-back-btn {
+    display: inline-block;
+    padding: 0;
+    border: none;
+    background: none;
+    color: #0069ff;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    margin-bottom: 8px;
+}
+
+.ctfb-back-btn:hover {
+    text-decoration: underline;
+}
+
+.ctfb-selected-info {
+    font-size: 15px;
+    font-weight: 600;
+    color: #1a1a2e;
+    margin: 0;
+    padding: 12px 16px;
+    background: #f0f7ff;
+    border-radius: 8px;
+    border-left: 4px solid #0069ff;
+}
+
+.ctfb-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+
+@media (max-width: 520px) {
+    .ctfb-form-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.ctfb-field label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #374151;
+    margin-bottom: 4px;
+}
+
+.ctfb-req {
+    color: #b91c1c;
+}
+
+.ctfb-field input,
+.ctfb-field select {
+    width: 100%;
+    padding: 9px 12px;
+    font-size: 14px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #fff;
+    color: #1a1a2e;
+    transition: border-color .15s, box-shadow .15s;
+}
+
+.ctfb-field input:focus,
+.ctfb-field select:focus {
+    outline: none;
+    border-color: #0069ff;
+    box-shadow: 0 0 0 3px rgba(0, 105, 255, .12);
+}
+
+.ctfb-field input::placeholder {
+    color: #9ca3af;
+}
+
+.ctfb-submit-btn {
+    display: block;
+    width: 100%;
+    margin-top: 18px;
+    padding: 12px 24px;
+    font-size: 15px;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    background: #0069ff;
+    color: #fff;
+    cursor: pointer;
+    transition: background .15s;
+}
+
+.ctfb-submit-btn:hover:not(:disabled) {
+    background: #0055d4;
+}
+
+.ctfb-submit-btn:disabled {
+    opacity: .55;
+    cursor: not-allowed;
+}
+
+/* ── Honeypot ─────────────────────────────────────────── */
+
+.ctfb-hp {
+    position: absolute;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+}
+
+/* ── Done screen ──────────────────────────────────────── */
+
+.ctfb-done {
+    text-align: center;
+    padding: 48px 16px;
+}
+
+.ctfb-done-icon {
+    width: 56px;
+    height: 56px;
+    margin: 0 auto 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    font-weight: 700;
+    color: #fff;
+    background: #059669;
+    border-radius: 50%;
+}
+
+.ctfb-done h3 {
+    font-size: 20px;
+    margin: 0 0 8px 0;
+}
+
+.ctfb-done p {
+    font-size: 14px;
+    color: #6b7280;
+    margin: 0 0 6px 0;
+}
+
+.ctfb-done a {
+    color: #0069ff;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.ctfb-done a:hover {
+    text-decoration: underline;
+}
+
+/* ── Scrollbar (times panel) ──────────────────────────── */
+
+.ctfb-times-panel::-webkit-scrollbar {
+    width: 5px;
+}
+
+.ctfb-times-panel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.ctfb-times-panel::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 3px;
+}

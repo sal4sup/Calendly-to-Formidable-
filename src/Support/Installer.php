@@ -24,6 +24,8 @@ class Installer {
 			'assigned_host_name_field_id' => '',
 			'assigned_host_email_field_id' => '',
 			'assigned_host_user_uri_field_id' => '',
+			'booking_event_types'  => array(),
+			'booking_display_mode' => 'calendar',
 		);
 	}
 

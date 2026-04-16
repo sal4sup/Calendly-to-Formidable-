@@ -72,6 +72,23 @@ class Calendly_Client {
 		return $this->request( 'GET', $path );
 	}
 
+	public function get_event_type_available_times( $event_type_uri, $start_time, $end_time ) {
+		$path = '/event_type_available_times'
+			. '?event_type=' . rawurlencode( $event_type_uri )
+			. '&start_time=' . rawurlencode( $start_time )
+			. '&end_time=' . rawurlencode( $end_time );
+		return $this->request( 'GET', $path );
+	}
+
+	public function create_scheduling_link( $event_type_uri, $max_event_count = 1 ) {
+		$body = array(
+			'max_event_count' => absint( $max_event_count ),
+			'owner'           => $event_type_uri,
+			'owner_type'      => 'EventType',
+		);
+		return $this->request( 'POST', '/scheduling_links', $body );
+	}
+
 	public function request( $method, $path, $body = array(), &$trace = null ) {
 		if ( empty( $this->token ) ) {
 			return new \WP_Error( 'ctfb_missing_pat', 'Missing Personal Access Token.' );

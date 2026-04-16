@@ -42,6 +42,8 @@ class Settings_Page {
 		$sanitized['webhook_user_subscription_uri'] = isset( $existing['webhook_user_subscription_uri'] ) ? $existing['webhook_user_subscription_uri'] : '';
 		$sanitized['webhook_organization_subscription_uri'] = isset( $existing['webhook_organization_subscription_uri'] ) ? $existing['webhook_organization_subscription_uri'] : '';
 		$sanitized['allowed_event_types']        = $this->sanitize_allowed_event_types( $input, $existing );
+		$sanitized['booking_event_types']        = $this->sanitize_booking_event_types( $input, $existing );
+		$sanitized['booking_display_mode']       = ( isset( $input['booking_display_mode'] ) && 'list' === $input['booking_display_mode'] ) ? 'list' : 'calendar';
 		$sanitized['assigned_host_name_field_id'] = isset( $input['assigned_host_name_field_id'] ) ? sanitize_text_field( $input['assigned_host_name_field_id'] ) : ( isset( $existing['assigned_host_name_field_id'] ) ? sanitize_text_field( $existing['assigned_host_name_field_id'] ) : '' );
 		$sanitized['assigned_host_email_field_id'] = isset( $input['assigned_host_email_field_id'] ) ? sanitize_text_field( $input['assigned_host_email_field_id'] ) : ( isset( $existing['assigned_host_email_field_id'] ) ? sanitize_text_field( $existing['assigned_host_email_field_id'] ) : '' );
 		$sanitized['assigned_host_user_uri_field_id'] = isset( $input['assigned_host_user_uri_field_id'] ) ? sanitize_text_field( $input['assigned_host_user_uri_field_id'] ) : ( isset( $existing['assigned_host_user_uri_field_id'] ) ? sanitize_text_field( $existing['assigned_host_user_uri_field_id'] ) : '' );
@@ -108,6 +110,37 @@ class Settings_Page {
 
 		if ( empty( $allowed ) && isset( $existing['allowed_event_types'] ) && is_array( $existing['allowed_event_types'] ) && ! isset( $input['allowed_event_types'] ) && ! isset( $input['allowed_event_types_manual'] ) ) {
 			$allowed = $existing['allowed_event_types'];
+		}
+
+		return array_values( array_unique( $allowed ) );
+	}
+
+	private function sanitize_booking_event_types( $input, $existing ) {
+		$allowed = array();
+
+		if ( isset( $input['booking_event_types'] ) && is_array( $input['booking_event_types'] ) ) {
+			foreach ( $input['booking_event_types'] as $uri ) {
+				$clean = esc_url_raw( trim( (string) $uri ) );
+				if ( '' !== $clean ) {
+					$allowed[] = $clean;
+				}
+			}
+		}
+
+		if ( isset( $input['booking_event_types_manual'] ) ) {
+			$manual_lines = preg_split( '/\r\n|\r|\n/', (string) $input['booking_event_types_manual'] );
+			if ( is_array( $manual_lines ) ) {
+				foreach ( $manual_lines as $line ) {
+					$clean = esc_url_raw( trim( (string) $line ) );
+					if ( '' !== $clean ) {
+						$allowed[] = $clean;
+					}
+				}
+			}
+		}
+
+		if ( empty( $allowed ) && isset( $existing['booking_event_types'] ) && is_array( $existing['booking_event_types'] ) && ! isset( $input['booking_event_types'] ) && ! isset( $input['booking_event_types_manual'] ) ) {
+			$allowed = $existing['booking_event_types'];
 		}
 
 		return array_values( array_unique( $allowed ) );
@@ -562,6 +595,7 @@ class Settings_Page {
 		$options      = get_option( 'ctfb_options', array() );
 		$diagnostics  = get_option( 'ctfb_diagnostics', array() );
 		$allowed_event_type_uris = $this->get_allowed_event_types_from_options( $options );
+		$booking_event_type_uris = $this->get_booking_event_types_from_options( $options );
 		$event_type_response     = $this->get_available_event_types( $options );
 		$event_type_options      = isset( $event_type_response['event_types'] ) && is_array( $event_type_response['event_types'] ) ? $event_type_response['event_types'] : array();
 		$event_type_error        = isset( $event_type_response['error'] ) ? $event_type_response['error'] : '';
@@ -615,6 +649,39 @@ class Settings_Page {
 							<?php endif; ?>
 						</td>
 					</tr>
+					<tr>
+						<th>Booking Display Mode</th>
+						<td>
+							<?php $display_mode = isset( $options['booking_display_mode'] ) ? $options['booking_display_mode'] : 'calendar'; ?>
+							<label style="display:block;margin-bottom:8px;">
+								<input type="radio" name="ctfb_options[booking_display_mode]" value="calendar" <?php checked( $display_mode, 'calendar' ); ?> />
+								<strong>Calendar</strong> &mdash; Monthly grid, user picks a day then sees time slots
+							</label>
+							<label style="display:block;">
+								<input type="radio" name="ctfb_options[booking_display_mode]" value="list" <?php checked( $display_mode, 'list' ); ?> />
+								<strong>List</strong> &mdash; Week-based list of available slots, no calendar grid
+							</label>
+						</td>
+					</tr>
+					<tr>
+						<th>Frontend Booking Event Types</th>
+						<td>
+							<?php if ( empty( $event_type_error ) && ! empty( $event_type_options ) ) : ?>
+								<select name="ctfb_options[booking_event_types][]" multiple="multiple" style="min-width: 420px; min-height: 140px;">
+									<?php foreach ( $event_type_options as $event_type_option ) : ?>
+										<?php $uri = isset( $event_type_option['uri'] ) ? $event_type_option['uri'] : ''; ?>
+										<?php $label = isset( $event_type_option['label'] ) ? $event_type_option['label'] : ( isset( $event_type_option['name'] ) ? $event_type_option['name'] : $uri ); ?>
+										<option value="<?php echo esc_attr( $uri ); ?>" <?php selected( in_array( $uri, $booking_event_type_uris, true ) ); ?>><?php echo esc_html( $label ); ?></option>
+									<?php endforeach; ?>
+								</select>
+								<p class="description">Select which meeting types appear on the <code>[ctfb_booking]</code> shortcode. Leave empty to show all active types.</p>
+							<?php else : ?>
+								<p><strong>Could not load event types from Calendly API.</strong></p>
+								<textarea name="ctfb_options[booking_event_types_manual]" rows="4" style="min-width: 420px;"><?php echo esc_textarea( implode( "\n", $booking_event_type_uris ) ); ?></textarea>
+								<p class="description">Enter one event type URI per line. Leave empty to show all active types.</p>
+							<?php endif; ?>
+						</td>
+					</tr>
 					<tr><th>Webhook endpoint URL</th><td><code><?php echo esc_html( rest_url( 'ctfb/v1/webhook' ) ); ?></code></td></tr>
 				</table>
 				<?php submit_button( 'Save Settings' ); ?>
@@ -664,6 +731,12 @@ class Settings_Page {
 				<tr><td>Last assigned host name</td><td><?php echo esc_html( isset( $diagnostics['last_assigned_host_name'] ) ? $diagnostics['last_assigned_host_name'] : '' ); ?></td></tr>
 				<tr><td>Last assigned host email</td><td><?php echo esc_html( isset( $diagnostics['last_assigned_host_email'] ) ? $diagnostics['last_assigned_host_email'] : '' ); ?></td></tr>
 				<tr><td>Last assigned host user URI</td><td><?php echo esc_html( isset( $diagnostics['last_assigned_host_user_uri'] ) ? $diagnostics['last_assigned_host_user_uri'] : '' ); ?></td></tr>
+				<tr><td>Last UTM source</td><td><?php echo esc_html( isset( $diagnostics['last_utm_source'] ) ? $diagnostics['last_utm_source'] : '' ); ?></td></tr>
+				<tr><td>Last UTM medium</td><td><?php echo esc_html( isset( $diagnostics['last_utm_medium'] ) ? $diagnostics['last_utm_medium'] : '' ); ?></td></tr>
+				<tr><td>Last UTM campaign</td><td><?php echo esc_html( isset( $diagnostics['last_utm_campaign'] ) ? $diagnostics['last_utm_campaign'] : '' ); ?></td></tr>
+				<tr><td>Last UTM term</td><td><?php echo esc_html( isset( $diagnostics['last_utm_term'] ) ? $diagnostics['last_utm_term'] : '' ); ?></td></tr>
+				<tr><td>Last UTM content</td><td><?php echo esc_html( isset( $diagnostics['last_utm_content'] ) ? $diagnostics['last_utm_content'] : '' ); ?></td></tr>
+				<tr><td>Last combined source-id value</td><td><?php echo esc_html( isset( $diagnostics['last_combined_source_id_value'] ) ? $diagnostics['last_combined_source_id_value'] : '' ); ?></td></tr>
 				<tr><td>Event type sources used</td><td><?php echo esc_html( isset( $diagnostics['event_type_sources_used'] ) ? $diagnostics['event_type_sources_used'] : '' ); ?></td></tr>
 				<tr><td>Organization event types loaded count</td><td><?php echo esc_html( isset( $diagnostics['organization_event_types_loaded_count'] ) ? (int) $diagnostics['organization_event_types_loaded_count'] : 0 ); ?></td></tr>
 				<tr><td>User event types loaded count</td><td><?php echo esc_html( isset( $diagnostics['user_event_types_loaded_count'] ) ? (int) $diagnostics['user_event_types_loaded_count'] : 0 ); ?></td></tr>
@@ -854,6 +927,22 @@ class Settings_Page {
 		}
 
 		foreach ( $options['allowed_event_types'] as $uri ) {
+			$clean = esc_url_raw( trim( (string) $uri ) );
+			if ( '' !== $clean ) {
+				$allowed[] = $clean;
+			}
+		}
+
+		return array_values( array_unique( $allowed ) );
+	}
+
+	private function get_booking_event_types_from_options( $options ) {
+		$allowed = array();
+		if ( empty( $options['booking_event_types'] ) || ! is_array( $options['booking_event_types'] ) ) {
+			return $allowed;
+		}
+
+		foreach ( $options['booking_event_types'] as $uri ) {
 			$clean = esc_url_raw( trim( (string) $uri ) );
 			if ( '' !== $clean ) {
 				$allowed[] = $clean;
