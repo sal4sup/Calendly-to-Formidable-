@@ -50,7 +50,7 @@ class Booking_Shortcode {
 		);
 
 		ob_start();
-		$this->render_html();
+		$this->render_html( $display_mode );
 		return ob_get_clean();
 	}
 
@@ -68,47 +68,70 @@ class Booking_Shortcode {
 		return '';
 	}
 
-	private function render_html() {
+	private function render_html( $display_mode = 'calendar' ) {
+		$is_list = ( 'list' === $display_mode );
 		?>
 		<div id="ctfb-booking" class="ctfb-booking">
 
-			<div id="ctfb-loading" class="ctfb-loader">
-				<div class="ctfb-spinner"></div>
-				<span>Loading availability...</span>
+			<!-- Step progress indicator -->
+			<div class="ctfb-steps" role="list" aria-label="Booking steps">
+				<div class="ctfb-step ctfb-step--active" data-step="1" role="listitem">
+					<span class="ctfb-step-dot" aria-hidden="true">1</span>
+					<span class="ctfb-step-label">Pick a time</span>
+				</div>
+				<div class="ctfb-step-sep" aria-hidden="true"></div>
+				<div class="ctfb-step" data-step="2" role="listitem">
+					<span class="ctfb-step-dot" aria-hidden="true">2</span>
+					<span class="ctfb-step-label">Your details</span>
+				</div>
+				<div class="ctfb-step-sep" aria-hidden="true"></div>
+				<div class="ctfb-step" data-step="3" role="listitem">
+					<span class="ctfb-step-dot" aria-hidden="true">3</span>
+					<span class="ctfb-step-label">Confirm</span>
+				</div>
 			</div>
 
 			<div id="ctfb-global-error" class="ctfb-global-error" style="display:none;"></div>
 
-			<!-- Step 1: Date / Time picker — both modes share this panel -->
+			<!--
+				Loader — only shown when eventType is not yet known (edge case).
+				Hidden by default; JS shows it only if an event-types API call is needed.
+			-->
+			<div id="ctfb-loading" class="ctfb-loader" style="display:none;">
+				<div class="ctfb-spinner"></div>
+				<span>Getting availability&hellip;</span>
+			</div>
+
+			<!-- ─── Step 1: Date / Time picker ─────────────────────── -->
 			<div id="ctfb-step-datetime" class="ctfb-panel" style="display:none;">
 
 				<!-- Calendar mode: month grid -->
-				<div id="ctfb-cal-section" style="display:none;">
+				<div id="ctfb-cal-section" style="<?php echo $is_list ? 'display:none;' : ''; ?>">
 					<div class="ctfb-calendar">
 						<div class="ctfb-cal-header">
 							<button type="button" id="ctfb-cal-prev" class="ctfb-cal-nav" aria-label="Previous month">&#8249;</button>
 							<span id="ctfb-cal-title" class="ctfb-cal-title"></span>
 							<button type="button" id="ctfb-cal-next" class="ctfb-cal-nav" aria-label="Next month">&#8250;</button>
 						</div>
-						<div class="ctfb-cal-weekdays">
+						<div class="ctfb-cal-weekdays" aria-hidden="true">
 							<span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
 						</div>
-						<div id="ctfb-cal-grid" class="ctfb-cal-grid"></div>
+						<div id="ctfb-cal-grid" class="ctfb-cal-grid" role="grid" aria-label="Select a date"></div>
 						<div id="ctfb-cal-empty" class="ctfb-cal-empty" style="display:none;">No availability this month. Try the next month.</div>
 					</div>
 				</div>
 
-				<!-- Calendar mode: times panel (shown after day is selected) -->
+				<!-- Calendar mode: time picker (shown after day selected) -->
 				<div id="ctfb-times-section" style="display:none;">
 					<button type="button" id="ctfb-back-to-cal" class="ctfb-back-btn">&#8592; Back to calendar</button>
 					<h4 id="ctfb-times-title" class="ctfb-times-title"></h4>
 					<div id="ctfb-times-list" class="ctfb-times-list ctfb-times-list--grid"></div>
 				</div>
 
-				<!-- List mode: week-based slot list -->
-				<div id="ctfb-list-section" style="display:none;">
+				<!-- List mode: week-based day cards -->
+				<div id="ctfb-list-section" style="<?php echo $is_list ? '' : 'display:none;'; ?>">
 
-					<!-- List sub-step 1: day selection -->
+					<!-- Sub-step 1: day cards -->
 					<div id="ctfb-list-days-panel">
 						<div class="ctfb-week-nav">
 							<button type="button" id="ctfb-prev-week" class="ctfb-cal-nav" aria-label="Previous week">&#8249;</button>
@@ -118,7 +141,7 @@ class Booking_Shortcode {
 						<div id="ctfb-week-slots" class="ctfb-day-cards"></div>
 					</div>
 
-					<!-- List sub-step 2: time selection for chosen day -->
+					<!-- Sub-step 2: time pills for chosen day -->
 					<div id="ctfb-list-times-panel" style="display:none;">
 						<button type="button" id="ctfb-list-back-to-days" class="ctfb-back-btn">&#8592; Back to days</button>
 						<h4 id="ctfb-list-times-title" class="ctfb-times-title"></h4>
@@ -129,10 +152,10 @@ class Booking_Shortcode {
 
 			</div>
 
-			<!-- Step 2: Form -->
+			<!-- ─── Step 2: Booking form ────────────────────────────── -->
 			<div id="ctfb-step-form" class="ctfb-panel" style="display:none;">
 				<div class="ctfb-form-header">
-					<button type="button" id="ctfb-back-to-datetime" class="ctfb-back-btn" aria-label="Back">&#8592; Change time</button>
+					<button type="button" id="ctfb-back-to-datetime" class="ctfb-back-btn">&#8592; Change time</button>
 					<p id="ctfb-selected-info" class="ctfb-selected-info"></p>
 				</div>
 				<form id="ctfb-booking-form" class="ctfb-form" novalidate>
@@ -158,7 +181,7 @@ class Booking_Shortcode {
 							<input type="text" id="ctfb-country" name="country" autocomplete="country-name" placeholder="Country" />
 						</div>
 						<div class="ctfb-field">
-							<label for="ctfb-freight">Are you a freight forwarder?</label>
+							<label for="ctfb-freight">Freight forwarder?</label>
 							<select id="ctfb-freight" name="freight_forwarder">
 								<option value="No">No</option>
 								<option value="Yes">Yes</option>
@@ -173,13 +196,13 @@ class Booking_Shortcode {
 				</form>
 			</div>
 
-			<!-- Step 3: Done -->
+			<!-- ─── Step 3: Done ────────────────────────────────────── -->
 			<div id="ctfb-step-done" class="ctfb-panel" style="display:none;">
 				<div class="ctfb-done">
 					<div class="ctfb-done-icon">&#10003;</div>
 					<h3>Almost done!</h3>
-					<p>Redirecting you to Calendly to confirm your booking.</p>
-					<p>If you are not redirected, <a id="ctfb-booking-link" href="#" target="_blank" rel="noopener noreferrer">click here</a>.</p>
+					<p>Redirecting you to Calendly to confirm your booking&hellip;</p>
+					<p>Not redirected? <a id="ctfb-booking-link" href="#" target="_blank" rel="noopener noreferrer">Click here to continue</a>.</p>
 				</div>
 			</div>
 

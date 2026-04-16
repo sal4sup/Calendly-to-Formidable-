@@ -1,9 +1,10 @@
-/* ── Base ──────────────────────────────────────────────── */
+/* ── Base ────────────────────────────────────────────── */
 
 .ctfb-booking {
     max-width: 760px;
     margin: 0 auto;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu,
+                 Cantarell, "Helvetica Neue", sans-serif;
     color: #1a1a2e;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
@@ -15,7 +16,7 @@
     box-sizing: border-box;
 }
 
-/* ── Panels ───────────────────────────────────────────── */
+/* ── Panels ──────────────────────────────────────────── */
 
 .ctfb-panel {
     animation: ctfbFadeIn .2s ease;
@@ -26,7 +27,99 @@
     to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Loader ───────────────────────────────────────────── */
+/* ── Step progress indicator ─────────────────────────── */
+
+.ctfb-steps {
+    display: flex;
+    align-items: center;
+    margin-bottom: 28px;
+    gap: 0;
+}
+
+.ctfb-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+}
+
+.ctfb-step-dot {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    background: #e5e7eb;
+    color: #9ca3af;
+    transition: background .2s, color .2s;
+    flex-shrink: 0;
+}
+
+.ctfb-step-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: #9ca3af;
+    transition: color .2s;
+    white-space: nowrap;
+}
+
+.ctfb-step--active .ctfb-step-dot {
+    background: #0069ff;
+    color: #fff;
+}
+
+.ctfb-step--active .ctfb-step-label {
+    color: #0069ff;
+    font-weight: 600;
+}
+
+.ctfb-step--done .ctfb-step-dot {
+    background: #059669;
+    color: #fff;
+}
+
+/* Checkmark for done steps */
+.ctfb-step--done .ctfb-step-dot::before {
+    content: '\2713';
+    font-size: 13px;
+}
+
+.ctfb-step--done .ctfb-step-dot {
+    font-size: 0; /* hide the number */
+}
+
+.ctfb-step--done .ctfb-step-label {
+    color: #059669;
+}
+
+.ctfb-step-sep {
+    flex: 1;
+    height: 2px;
+    background: #e5e7eb;
+    margin: 0 8px;
+    min-width: 20px;
+    border-radius: 1px;
+    transition: background .2s;
+}
+
+/* Connector turns green when previous step is done */
+.ctfb-step--done + .ctfb-step-sep {
+    background: #059669;
+}
+
+@media (max-width: 480px) {
+    .ctfb-step-label {
+        display: none;
+    }
+    .ctfb-step-sep {
+        min-width: 12px;
+    }
+}
+
+/* ── Loader (only shown for event-types fallback) ────── */
 
 .ctfb-loader {
     display: flex;
@@ -45,13 +138,51 @@
     border-top-color: #0069ff;
     border-radius: 50%;
     animation: ctfbSpin .6s linear infinite;
+    flex-shrink: 0;
 }
 
 @keyframes ctfbSpin {
     to { transform: rotate(360deg); }
 }
 
-/* ── Error ────────────────────────────────────────────── */
+/* ── Skeleton shimmer ────────────────────────────────── */
+
+@keyframes ctfbShimmer {
+    0%   { background-position: -400px 0; }
+    100% { background-position:  400px 0; }
+}
+
+.ctfb-skel-line {
+    display: block;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #f0f0f0 25%, #e2e2e2 50%, #f0f0f0 75%);
+    background-size: 400px 100%;
+    animation: ctfbShimmer 1.4s ease infinite;
+}
+
+.ctfb-skel-line--name {
+    width: 100px;
+    height: 14px;
+    margin-bottom: 6px;
+}
+
+.ctfb-skel-line--date {
+    width: 70px;
+    height: 11px;
+}
+
+.ctfb-skel-badge {
+    display: block;
+    width: 54px;
+    height: 22px;
+    border-radius: 20px;
+    background: linear-gradient(90deg, #f0f0f0 25%, #e2e2e2 50%, #f0f0f0 75%);
+    background-size: 400px 100%;
+    animation: ctfbShimmer 1.4s ease infinite;
+    flex-shrink: 0;
+}
+
+/* ── Error ───────────────────────────────────────────── */
 
 .ctfb-global-error,
 .ctfb-booking-error {
@@ -70,7 +201,7 @@
     border-radius: 6px;
 }
 
-/* ── Calendar layout ──────────────────────────────────── */
+/* ── Calendar layout ─────────────────────────────────── */
 
 .ctfb-calendar-layout {
     display: flex;
@@ -106,7 +237,7 @@
     }
 }
 
-/* ── Calendar header ──────────────────────────────────── */
+/* ── Calendar header ─────────────────────────────────── */
 
 .ctfb-cal-header {
     display: flex;
@@ -147,26 +278,26 @@
     cursor: not-allowed;
 }
 
-/* ── Calendar weekdays ────────────────────────────────── */
+/* ── Calendar weekdays ───────────────────────────────── */
 
 .ctfb-cal-weekdays {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
     text-align: center;
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 11px;
+    font-weight: 700;
     color: #9ca3af;
     text-transform: uppercase;
-    letter-spacing: .5px;
+    letter-spacing: .6px;
     margin-bottom: 6px;
 }
 
-/* ── Calendar grid ────────────────────────────────────── */
+/* ── Calendar grid ───────────────────────────────────── */
 
 .ctfb-cal-grid {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
-    gap: 4px;
+    gap: 3px;
 }
 
 .ctfb-cal-empty {
@@ -182,14 +313,15 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 14px;
+    font-size: 13px;
     border: none;
     border-radius: 50%;
     background: transparent;
     color: #374151;
     cursor: pointer;
     padding: 0;
-    transition: background .12s, color .12s;
+    transition: background .15s, color .15s;
+    font-weight: 400;
 }
 
 .ctfb-cal-cell--empty {
@@ -197,6 +329,12 @@
 }
 
 .ctfb-cal-cell--past {
+    color: #d1d5db;
+    cursor: default;
+}
+
+/* Loading: subtle appearance while awaiting API data */
+.ctfb-cal-cell--loading {
     color: #d1d5db;
     cursor: default;
 }
@@ -209,6 +347,7 @@
 .ctfb-cal-cell--today:not(.ctfb-cal-cell--selected) {
     font-weight: 700;
     box-shadow: inset 0 0 0 2px #0069ff;
+    color: #0069ff;
 }
 
 .ctfb-cal-cell--available {
@@ -219,11 +358,11 @@
 .ctfb-cal-cell--available::after {
     content: '';
     position: absolute;
-    bottom: 3px;
+    bottom: 2px;
     left: 50%;
     transform: translateX(-50%);
-    width: 5px;
-    height: 5px;
+    width: 4px;
+    height: 4px;
     border-radius: 50%;
     background: #0069ff;
 }
@@ -239,15 +378,15 @@
 }
 
 .ctfb-cal-cell--selected::after {
-    background: #fff;
+    background: rgba(255,255,255,.7);
 }
 
-/* ── Time slots panel ─────────────────────────────────── */
+/* ── Time slots panel ────────────────────────────────── */
 
 .ctfb-times-title {
     font-size: 15px;
     font-weight: 600;
-    margin: 0 0 12px 0;
+    margin: 0 0 14px 0;
     color: #1a1a2e;
 }
 
@@ -257,29 +396,146 @@
     gap: 6px;
 }
 
+/* Two-column grid for time buttons (desktop) */
+.ctfb-times-list--grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+}
+
+@media (max-width: 480px) {
+    .ctfb-times-list--grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 .ctfb-time-btn {
     display: block;
     width: 100%;
-    padding: 10px 16px;
+    padding: 10px 12px;
     font-size: 14px;
     font-weight: 500;
     text-align: center;
-    border: 1px solid #0069ff;
+    border: 1.5px solid #0069ff;
     border-radius: 8px;
     background: #fff;
     color: #0069ff;
     cursor: pointer;
-    transition: background .15s, color .15s;
+    transition: background .15s, color .15s, transform .1s;
 }
 
 .ctfb-time-btn:hover {
     background: #eff6ff;
+    transform: translateY(-1px);
 }
 
 .ctfb-time-btn--selected,
 .ctfb-time-btn--selected:hover {
     background: #0069ff;
     color: #fff;
+    transform: none;
+}
+
+/* ── Week nav (list mode) ────────────────────────────── */
+
+.ctfb-week-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    gap: 8px;
+}
+
+/* ── Day cards (list mode) ───────────────────────────── */
+
+.ctfb-day-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ctfb-day-card {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 14px 16px;
+    background: #fff;
+    border: 1.5px solid #e5e7eb;
+    border-radius: 12px;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color .15s, background .15s, transform .12s, box-shadow .15s;
+    gap: 12px;
+}
+
+.ctfb-day-card:hover {
+    border-color: #0069ff;
+    background: #f5f9ff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 105, 255, .10);
+}
+
+.ctfb-day-card:active {
+    transform: translateY(0);
+    box-shadow: none;
+}
+
+.ctfb-day-card--skeleton {
+    cursor: default;
+    pointer-events: none;
+}
+
+.ctfb-day-card--skeleton:hover {
+    border-color: #e5e7eb;
+    background: #fff;
+    transform: none;
+    box-shadow: none;
+}
+
+.ctfb-day-card-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.ctfb-day-card-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: #1a1a2e;
+    display: block;
+}
+
+.ctfb-day-card-date {
+    font-size: 13px;
+    color: #6b7280;
+    display: block;
+}
+
+.ctfb-day-card-badge {
+    flex-shrink: 0;
+    padding: 3px 10px;
+    background: #eff6ff;
+    color: #0069ff;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 20px;
+    border: 1px solid #bfdbfe;
+    white-space: nowrap;
+}
+
+.ctfb-day-card-arrow {
+    flex-shrink: 0;
+    font-size: 22px;
+    color: #9ca3af;
+    line-height: 1;
+    transition: color .15s, transform .15s;
+}
+
+.ctfb-day-card:hover .ctfb-day-card-arrow {
+    color: #0069ff;
+    transform: translateX(2px);
 }
 
 /* ── Form ─────────────────────────────────────────────── */
@@ -289,19 +545,23 @@
 }
 
 .ctfb-back-btn {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     padding: 0;
     border: none;
     background: none;
     color: #0069ff;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
+    transition: opacity .15s;
 }
 
 .ctfb-back-btn:hover {
-    text-decoration: underline;
+    opacity: .75;
+    text-decoration: none;
 }
 
 .ctfb-selected-info {
@@ -311,7 +571,7 @@
     margin: 0;
     padding: 12px 16px;
     background: #f0f7ff;
-    border-radius: 8px;
+    border-radius: 10px;
     border-left: 4px solid #0069ff;
 }
 
@@ -329,10 +589,12 @@
 
 .ctfb-field label {
     display: block;
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 12px;
+    font-weight: 700;
     color: #374151;
-    margin-bottom: 4px;
+    margin-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
 }
 
 .ctfb-req {
@@ -342,9 +604,9 @@
 .ctfb-field input,
 .ctfb-field select {
     width: 100%;
-    padding: 9px 12px;
+    padding: 10px 12px;
     font-size: 14px;
-    border: 1px solid #d1d5db;
+    border: 1.5px solid #e5e7eb;
     border-radius: 8px;
     background: #fff;
     color: #1a1a2e;
@@ -366,19 +628,25 @@
     display: block;
     width: 100%;
     margin-top: 18px;
-    padding: 12px 24px;
+    padding: 13px 24px;
     font-size: 15px;
-    font-weight: 600;
+    font-weight: 700;
     border: none;
-    border-radius: 8px;
+    border-radius: 10px;
     background: #0069ff;
     color: #fff;
     cursor: pointer;
-    transition: background .15s;
+    transition: background .15s, transform .1s;
+    letter-spacing: .2px;
 }
 
 .ctfb-submit-btn:hover:not(:disabled) {
     background: #0055d4;
+    transform: translateY(-1px);
+}
+
+.ctfb-submit-btn:active:not(:disabled) {
+    transform: translateY(0);
 }
 
 .ctfb-submit-btn:disabled {
@@ -396,30 +664,32 @@
     overflow: hidden;
 }
 
-/* ── Done screen ──────────────────────────────────────── */
+/* ── Done screen ─────────────────────────────────────── */
 
 .ctfb-done {
     text-align: center;
-    padding: 48px 16px;
+    padding: 48px 24px;
 }
 
 .ctfb-done-icon {
-    width: 56px;
-    height: 56px;
-    margin: 0 auto 16px;
+    width: 60px;
+    height: 60px;
+    margin: 0 auto 18px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 28px;
+    font-size: 26px;
     font-weight: 700;
     color: #fff;
     background: #059669;
     border-radius: 50%;
+    box-shadow: 0 4px 16px rgba(5, 150, 105, .25);
 }
 
 .ctfb-done h3 {
-    font-size: 20px;
-    margin: 0 0 8px 0;
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0 0 10px 0;
 }
 
 .ctfb-done p {
@@ -438,7 +708,7 @@
     text-decoration: underline;
 }
 
-/* ── Scrollbar (times panel) ──────────────────────────── */
+/* ── Scrollbar (times panel) ─────────────────────────── */
 
 .ctfb-times-panel::-webkit-scrollbar {
     width: 5px;
